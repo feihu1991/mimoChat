@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.mimocode/
+.agents/
+.firecrawl/
+*.tsbuildinfo
+.env
+.env.*
