@@ -1,12 +1,11 @@
 package com.example.mimochat.data.local
 
 import android.content.Context
-import androidx.room.Database
-import androidx.room.Room
-import androidx.room.RoomDatabase
+import androidx.room.*
 import com.example.mimochat.data.ConversationEntity
 import com.example.mimochat.data.MessageEntity
 import com.example.mimochat.data.MemoryEntity
+import kotlinx.coroutines.flow.Flow
 
 @Database(
     entities = [ConversationEntity::class, MessageEntity::class, MemoryEntity::class],
@@ -36,18 +35,18 @@ abstract class AppDatabase : RoomDatabase() {
 
 @Dao
 interface MemoryDao {
-    @androidx.room.Query("SELECT * FROM memories ORDER BY createdAt DESC")
-    fun getAllFlow(): kotlinx.coroutines.flow.Flow<List<MemoryEntity>>
+    @Query("SELECT * FROM memories ORDER BY createdAt DESC")
+    fun getAllFlow(): Flow<List<MemoryEntity>>
 
-    @androidx.room.Query("SELECT * FROM memories WHERE enabled = 1 ORDER BY createdAt DESC")
+    @Query("SELECT * FROM memories WHERE enabled = 1 ORDER BY createdAt DESC")
     suspend fun getEnabled(): List<MemoryEntity>
 
-    @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(memory: MemoryEntity)
 
-    @androidx.room.Query("DELETE FROM memories WHERE id = :id")
+    @Query("DELETE FROM memories WHERE id = :id")
     suspend fun deleteById(id: String)
 
-    @androidx.room.Query("UPDATE memories SET enabled = :enabled WHERE id = :id")
+    @Query("UPDATE memories SET enabled = :enabled WHERE id = :id")
     suspend fun setEnabled(id: String, enabled: Boolean)
 }

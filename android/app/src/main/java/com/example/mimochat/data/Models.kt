@@ -83,6 +83,7 @@ enum class VoiceModel(val apiName: String) {
     MIMO_V2_5_TTS_VOICECLONE("mimo-v2.5-tts-voiceclone")
 }
 
+@Serializable
 data class Role(
     val id: String,
     val name: String,
@@ -96,6 +97,7 @@ data class Role(
     val color: String
 )
 
+@Serializable
 data class Attachment(
     val id: String,
     val name: String,
@@ -103,6 +105,7 @@ data class Attachment(
     val url: String? = null
 )
 
+@Serializable
 enum class AttachmentType { IMAGE, FILE }
 
 data class Message(
