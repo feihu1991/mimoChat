@@ -165,24 +165,38 @@ private fun MessageBubble(
                         }
                     }
                 } else {
-                    if (isUser) {
-                        Text(
-                            text = message.text,
-                            modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
-                            fontSize = 14.sp, lineHeight = 22.sp,
-                            color = UserMessageText
-                        )
-                    } else {
-                        // 助手消息使用 Markdown 渲染
-                        MarkdownText(
-                            text = when {
-                                message.text.isEmpty() && isStreamingMsg -> "正在思考…"
-                                message.text.isEmpty() && isPending -> "正在连接…"
-                                isFailed && message.text.isEmpty() -> "请求失败"
-                                else -> message.text
-                            },
-                            modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp)
-                        )
+                    Column {
+                        if (isUser) {
+                            Text(
+                                text = message.text,
+                                modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
+                                fontSize = 14.sp, lineHeight = 22.sp,
+                                color = UserMessageText
+                            )
+                        } else {
+                            // 助手消息使用 Markdown 渲染
+                            MarkdownText(
+                                text = when {
+                                    message.text.isEmpty() && isStreamingMsg -> "正在思考…"
+                                    message.text.isEmpty() && isPending -> "正在连接…"
+                                    isFailed && message.text.isEmpty() -> "请求失败"
+                                    else -> message.text
+                                },
+                                modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp)
+                            )
+                            // 代码块复制按钮 - 当消息包含代码块时显示
+                            if (!isUser && message.text.contains("```") && message.text.isNotBlank()) {
+                                TextButton(
+                                    onClick = { onCopy() },
+                                    modifier = Modifier.padding(start = 8.dp, bottom = 4.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Icon(Icons.Default.ContentCopy, null, modifier = Modifier.size(12.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("复制代码", fontSize = 10.sp)
+                                }
+                            }
+                        }
                     }
                 }
             }
