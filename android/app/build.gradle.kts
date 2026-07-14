@@ -110,5 +110,4 @@ dependencies {
 
   // Markdown rendering
   implementation(libs.markwon.core)
-  implementation(libs.markwon.ext.strikethrough)
 }

@@ -26,7 +26,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.example.mimochat.data.*
 import com.example.mimochat.theme.*
 import io.noties.markwon.Markwon
-import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import kotlinx.coroutines.launch
 
 @Composable
@@ -260,7 +259,6 @@ private fun MarkdownText(text: String, modifier: Modifier = Modifier) {
     // 缓存 Markwon 实例
     val markwon = remember {
         Markwon.builder(context)
-            .usePlugin(StrikethroughPlugin.create())
             .build()
     }
 
