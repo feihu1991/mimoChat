@@ -27,13 +27,11 @@ fun ModelPanel(
         modifier = Modifier.fillMaxSize().clickable(onClick = onClose),
         color = Color.Black.copy(alpha = 0.3f)
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.4f).align(Alignment.BottomCenter),
-            verticalArrangement = Arrangement.Bottom
-        ) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
             Surface(
                 shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-                color = MaterialTheme.colorScheme.surface
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.fillMaxWidth().fillMaxHeight(0.4f)
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
                     // Grabber
