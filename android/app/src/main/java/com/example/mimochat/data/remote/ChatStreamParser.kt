@@ -18,10 +18,11 @@ object ChatStreamParser {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     /**
-     * 解析 SSE 流式响应，逐块输出文本增量
-     * 处理: 空行、心跳、[DONE]、不完整 JSON、Unicode 边界
+     * 解析 SSE 流式响应
+     * 修复：不再在流结束时无条件发 Done，只在明确收到 [DONE] 时发
      */
     fun parseStream(lineFlow: Flow<String>): Flow<StreamChunk> = flow {
+        var receivedDone = false
         var buffer = ""
 
         lineFlow.collect { rawLine ->
@@ -29,11 +30,14 @@ object ChatStreamParser {
 
             // 跳过空行和心跳
             if (line.isEmpty()) return@collect
-            if (line.startsWith(":")) return@collect // SSE comment / heartbeat
+            if (line.startsWith(":")) return@collect
 
             // 处理 [DONE]
             if (line == "data: [DONE]") {
-                emit(StreamChunk.Done)
+                if (!receivedDone) {
+                    receivedDone = true
+                    emit(StreamChunk.Done)
+                }
                 return@collect
             }
 
@@ -61,14 +65,13 @@ object ChatStreamParser {
                         buffer = ""
                     }
                 } catch (_: Exception) {
-                    // 仍然不完整，继续缓冲
-                    if (buffer.length > 10000) buffer = "" // 防止无限增长
+                    if (buffer.length > 10_000) buffer = ""
                 }
             }
         }
 
-        // 如果流结束但没有收到 [DONE]，也发出完成信号
-        emit(StreamChunk.Done)
+        // 流结束 — 不再无条件发 Done
+        // 如果没有收到 [DONE]，由调用方判断是否需要标记完成
     }
 
     private fun parseChunk(json: JsonObject): StreamChunk? {
@@ -84,27 +87,6 @@ object ChatStreamParser {
         if (choices.isEmpty()) return null
 
         val choice = choices[0].jsonObject
-        val delta = choice["delta"]?.jsonObject
-
-        if (delta != null) {
-            val content = delta["content"]?.jsonPrimitive?.contentOrNull
-            val role = delta["role"]?.jsonPrimitive?.contentOrNull
-            if (content != null) {
-                return StreamChunk.Delta(content)
-            }
-            if (role != null) {
-                return StreamChunk.Role(role)
-            }
-        }
-
-        // 非流式 fallback
-        val message = choice["message"]?.jsonObject
-        if (message != null) {
-            val content = message["content"]?.jsonPrimitive?.contentOrNull
-            if (content != null) {
-                return StreamChunk.Complete(content)
-            }
-        }
 
         // 检查 finish_reason
         val finishReason = choice["finish_reason"]?.jsonPrimitive?.contentOrNull
@@ -112,21 +94,30 @@ object ChatStreamParser {
             return StreamChunk.Finished(finishReason)
         }
 
+        val delta = choice["delta"]?.jsonObject
+        if (delta != null) {
+            val content = delta["content"]?.jsonPrimitive?.contentOrNull
+            val role = delta["role"]?.jsonPrimitive?.contentOrNull
+            if (content != null) return StreamChunk.Delta(content)
+            if (role != null) return StreamChunk.Role(role)
+        }
+
+        // 非流式 fallback
+        val message = choice["message"]?.jsonObject
+        if (message != null) {
+            val content = message["content"]?.jsonPrimitive?.contentOrNull
+            if (content != null) return StreamChunk.Complete(content)
+        }
+
         return null
     }
 }
 
 sealed class StreamChunk {
-    /** 流式文本增量 */
     data class Delta(val text: String) : StreamChunk()
-    /** 角色标识 */
     data class Role(val role: String) : StreamChunk()
-    /** 非流式完整回复 */
     data class Complete(val text: String) : StreamChunk()
-    /** 流结束原因 */
     data class Finished(val reason: String) : StreamChunk()
-    /** 错误 */
     data class Error(val message: String) : StreamChunk()
-    /** 流完成 */
     data object Done : StreamChunk()
 }

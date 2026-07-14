@@ -1,5 +1,6 @@
 package com.example.mimochat.ui.screens
 
+import android.widget.TextView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -17,12 +18,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import com.example.mimochat.data.*
 import com.example.mimochat.theme.*
+import io.noties.markwon.Markwon
+import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
+import io.noties.markwon.syntax.Prism4jThemeDarkula
+import io.noties.markwon.syntax.SyntaxHighlightPlugin
+import io.noties.prism4j.Prism4j
 import kotlinx.coroutines.launch
 
 @Composable
@@ -49,24 +56,15 @@ fun ChatScreen(
     val scope = rememberCoroutineScope()
     var showScrollButton by remember { mutableStateOf(false) }
 
-    // 自动滚动到底部
     LaunchedEffect(messages.size, messages.lastOrNull()?.text?.length) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(0)
-        }
+        if (messages.isNotEmpty()) listState.animateScrollToItem(0)
     }
-
-    // 滚动按钮
     showScrollButton = listState.firstVisibleItemIndex > 3
 
-    Column(
-        modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
-    ) {
-        // Top bar
+    Column(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         ChatTopBar(role = role, model = model, onMenu = onMenu, onNew = onNew, onModel = onModel)
 
         Box(modifier = Modifier.weight(1f)) {
-            // Messages
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize().padding(horizontal = 17.dp),
@@ -74,10 +72,7 @@ fun ChatScreen(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
                 reverseLayout = true
             ) {
-                if (messages.isEmpty()) {
-                    item { RoleWelcome(role = role) }
-                }
-
+                if (messages.isEmpty()) item { RoleWelcome(role = role) }
                 items(messages.reversed(), key = { it.id }) { message ->
                     MessageBubble(
                         message = message,
@@ -89,49 +84,31 @@ fun ChatScreen(
                 }
             }
 
-            // Scroll to bottom button
             if (showScrollButton) {
                 FloatingActionButton(
                     onClick = { scope.launch { listState.animateScrollToItem(0) } },
                     modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).size(40.dp),
                     containerColor = MaterialTheme.colorScheme.surface,
                     contentColor = MaterialTheme.colorScheme.onSurface
-                ) {
-                    Icon(Icons.Default.KeyboardArrowDown, "回到底部", modifier = Modifier.size(20.dp))
-                }
+                ) { Icon(Icons.Default.KeyboardArrowDown, "回到底部", modifier = Modifier.size(20.dp)) }
             }
         }
 
-        // No API Key warning
         if (!hasApiKey) {
             Surface(
                 color = MaterialTheme.colorScheme.errorContainer,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                 shape = RoundedCornerShape(8.dp)
             ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text(
-                        "请先在设置中配置 API Key 才能使用",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onErrorContainer
-                    )
+                    Text("请先在设置中配置 API Key", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
                 }
             }
         }
 
-        // Composer
-        ComposerArea(
-            input = input,
-            isStreaming = isStreaming,
-            onInput = onInput,
-            onSend = onSend,
-            onStop = onStop
-        )
+        ComposerArea(input = input, isStreaming = isStreaming, onInput = onInput, onSend = onSend, onStop = onStop)
     }
 }
 
@@ -149,13 +126,13 @@ private fun MessageBubble(
     val isUser = message.role == MessageRole.USER
     val isFailed = message.status == MessageStatus.FAILED
     val isStopped = message.status == MessageStatus.STOPPED
-    val isStreaming = message.status == MessageStatus.STREAMING
+    val isStreamingMsg = message.status == MessageStatus.STREAMING
+    val isPending = message.status == MessageStatus.PENDING
 
     Column(
         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
         horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
     ) {
-        // Message bubble
         SelectionContainer {
             Surface(
                 shape = RoundedCornerShape(
@@ -168,7 +145,8 @@ private fun MessageBubble(
                     isFailed -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
                     else -> Color.Transparent
                 },
-                modifier = Modifier.clickable(enabled = !isUser) { showMenu = !showMenu }
+                // 修复：所有消息都可以点击打开菜单
+                modifier = Modifier.clickable { showMenu = !showMenu }
             ) {
                 if (isEditing) {
                     Column(modifier = Modifier.padding(12.dp)) {
@@ -181,86 +159,70 @@ private fun MessageBubble(
                         Row(modifier = Modifier.padding(top = 8.dp)) {
                             TextButton(onClick = {
                                 isEditing = false
-                                if (editText.isNotBlank() && editText != message.text) {
-                                    onEdit(editText)
-                                }
+                                if (editText.isNotBlank() && editText != message.text) onEdit(editText)
                             }) { Text("保存并重新发送") }
                             TextButton(onClick = { isEditing = false; editText = message.text }) { Text("取消") }
                         }
                     }
                 } else {
-                    Text(
-                        text = when {
-                            message.text.isEmpty() && isStreaming -> "正在思考…"
-                            message.text.isEmpty() && message.status == MessageStatus.PENDING -> "正在连接…"
-                            isFailed -> message.text.ifEmpty { "请求失败" }
-                            else -> message.text
-                        },
-                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
-                        fontSize = 14.sp,
-                        lineHeight = 22.sp,
-                        color = when {
-                            isUser -> UserMessageText
-                            isFailed -> MaterialTheme.colorScheme.onErrorContainer
-                            else -> MaterialTheme.colorScheme.onSurface
-                        }
-                    )
+                    if (isUser) {
+                        Text(
+                            text = message.text,
+                            modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
+                            fontSize = 14.sp, lineHeight = 22.sp,
+                            color = UserMessageText
+                        )
+                    } else {
+                        // 助手消息使用 Markdown 渲染
+                        MarkdownText(
+                            text = when {
+                                message.text.isEmpty() && isStreamingMsg -> "正在思考…"
+                                message.text.isEmpty() && isPending -> "正在连接…"
+                                isFailed && message.text.isEmpty() -> "请求失败"
+                                else -> message.text
+                            },
+                            modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp)
+                        )
+                    }
                 }
             }
         }
 
-        // Status indicators
-        if (isStreaming && message.text.isNotEmpty()) {
+        // 流式进度
+        if (isStreamingMsg && message.text.isNotEmpty()) {
             LinearProgressIndicator(
                 modifier = Modifier.width(40.dp).height(2.dp).padding(top = 2.dp),
                 color = MaterialTheme.colorScheme.primary
             )
         }
 
-        // Error message
+        // 错误信息
         if (isFailed && message.errorMessage != null) {
-            Text(
-                text = message.errorMessage,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(top = 2.dp, start = 4.dp)
-            )
+            Text(message.errorMessage, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 2.dp, start = 4.dp))
         }
 
-        // Stopped indicator
-        if (isStopped) {
-            Text(
-                text = "已停止生成",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 2.dp, start = 4.dp)
-            )
+        // 停止标识
+        if (isStopped && message.text.isNotBlank()) {
+            Text("已停止生成", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp, start = 4.dp))
         }
 
-        // Action buttons
-        if (showMenu && !isUser && !isStreaming) {
-            Row(
-                modifier = Modifier.padding(top = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                if (isFailed) {
-                    SmallButton(onClick = { onRetry(); showMenu = false }, icon = Icons.Default.Refresh, label = "重试")
-                }
-                if (message.text.isNotBlank()) {
-                    SmallButton(onClick = { onCopy(); showMenu = false }, icon = Icons.Default.ContentCopy, label = "复制")
-                    SmallButton(onClick = { onRegenerate(); showMenu = false }, icon = Icons.Default.AutoFixHigh, label = "重新生成")
-                }
-                if (isStopped && message.text.isNotBlank()) {
-                    SmallButton(onClick = { onCopy(); showMenu = false }, icon = Icons.Default.ContentCopy, label = "复制")
-                }
-            }
-        }
-
-        // User message actions
-        if (showMenu && isUser && !isStreaming) {
+        // 操作菜单
+        if (showMenu && !isStreamingMsg && !isPending) {
             Row(modifier = Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                SmallButton(onClick = { onCopy(); showMenu = false }, icon = Icons.Default.ContentCopy, label = "复制")
-                SmallButton(onClick = { editText = message.text; isEditing = true; showMenu = false }, icon = Icons.Default.Edit, label = "编辑")
+                if (isUser) {
+                    SmallButton(onClick = { onCopy(); showMenu = false }, icon = Icons.Default.ContentCopy, label = "复制")
+                    SmallButton(onClick = { editText = message.text; isEditing = true; showMenu = false }, icon = Icons.Default.Edit, label = "编辑")
+                } else {
+                    if (message.text.isNotBlank()) {
+                        SmallButton(onClick = { onCopy(); showMenu = false }, icon = Icons.Default.ContentCopy, label = "复制")
+                        SmallButton(onClick = { onRegenerate(); showMenu = false }, icon = Icons.Default.AutoFixHigh, label = "重新生成")
+                    }
+                    if (isFailed) {
+                        SmallButton(onClick = { onRetry(); showMenu = false }, icon = Icons.Default.Refresh, label = "重试")
+                    }
+                }
             }
         }
     }
@@ -268,42 +230,52 @@ private fun MessageBubble(
 
 @Composable
 private fun SmallButton(onClick: () -> Unit, icon: androidx.compose.ui.graphics.vector.ImageVector, label: String) {
-    TextButton(
-        onClick = onClick,
-        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-        modifier = Modifier.height(32.dp)
-    ) {
+    TextButton(onClick = onClick, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp), modifier = Modifier.height(32.dp)) {
         Icon(icon, null, modifier = Modifier.size(14.dp))
         Spacer(Modifier.width(4.dp))
         Text(label, fontSize = 11.sp)
     }
 }
 
+/**
+ * Markdown 文本渲染 - 使用 Markwon
+ */
 @Composable
-private fun ChatTopBar(
-    role: Role,
-    model: ModelId,
-    onMenu: () -> Unit,
-    onNew: () -> Unit,
-    onModel: () -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        IconButton(onClick = onMenu) {
-            Icon(Icons.Default.Menu, "打开历史记录", tint = MaterialTheme.colorScheme.onSurface)
-        }
+private fun MarkdownText(text: String, modifier: Modifier = Modifier) {
+    val textColor = MaterialTheme.colorScheme.onSurface
+    val codeBackground = MaterialTheme.colorScheme.surfaceVariant
+    val codeTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+
+    AndroidView(
+        factory = { context ->
+            val prism4j = Prism4j(com.example.mimochat.data.remote.MarkdownGrammarLocator())
+            val markwon = Markwon.builder(context)
+                .usePlugin(StrikethroughPlugin.create())
+                .usePlugin(SyntaxHighlightPlugin.create(prism4j, Prism4jThemeDarkula.create()))
+                .build()
+            TextView(context).apply {
+                setTextColor(textColor.toArgb())
+                textSize = 14f
+            }
+        },
+        update = { textView ->
+            val markwon = Markwon.builder(textView.context)
+                .usePlugin(StrikethroughPlugin.create())
+                .build()
+            markwon.setMarkdown(textView, text)
+            textView.setTextColor(textColor.toArgb())
+        },
+        modifier = modifier
+    )
+}
+
+@Composable
+private fun ChatTopBar(role: Role, model: ModelId, onMenu: () -> Unit, onNew: () -> Unit, onModel: () -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = onMenu) { Icon(Icons.Default.Menu, "打开历史记录", tint = MaterialTheme.colorScheme.onSurface) }
         Spacer(Modifier.width(8.dp))
-        Row(
-            modifier = Modifier.weight(1f).clickable(onClick = onModel),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier.size(35.dp).clip(RoundedCornerShape(13.dp))
-                    .background(Color(android.graphics.Color.parseColor(role.color))),
-                contentAlignment = Alignment.Center
-            ) {
+        Row(modifier = Modifier.weight(1f).clickable(onClick = onModel), verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.size(35.dp).clip(RoundedCornerShape(13.dp)).background(Color(android.graphics.Color.parseColor(role.color))), contentAlignment = Alignment.Center) {
                 Text(role.name.first().toString(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
             }
             Spacer(Modifier.width(8.dp))
@@ -314,95 +286,33 @@ private fun ChatTopBar(
             Spacer(Modifier.width(4.dp))
             Icon(Icons.Default.KeyboardArrowDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp))
         }
-        IconButton(onClick = onNew) {
-            Icon(Icons.Default.Chat, "新建对话", tint = MaterialTheme.colorScheme.onSurface)
-        }
+        IconButton(onClick = onNew) { Icon(Icons.Default.Chat, "新建对话", tint = MaterialTheme.colorScheme.onSurface) }
     }
 }
 
 @Composable
 private fun RoleWelcome(role: Role) {
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier.size(78.dp).clip(RoundedCornerShape(29.dp))
-                .background(Color(android.graphics.Color.parseColor(role.color))),
-            contentAlignment = Alignment.Center
-        ) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(modifier = Modifier.size(78.dp).clip(RoundedCornerShape(29.dp)).background(Color(android.graphics.Color.parseColor(role.color))), contentAlignment = Alignment.Center) {
             Icon(Icons.Default.Star, null, tint = Color.White, modifier = Modifier.size(31.dp))
         }
         Spacer(Modifier.height(20.dp))
         Text("和 ${role.name} 聊聊", fontSize = 20.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(5.dp))
         Text(role.description, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(14.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            AbilityChip(role.capabilities)
-            AbilityChip(if (role.voiceModel == VoiceModel.MIMO_V2_5_TTS_VOICECLONE) "克隆音色" else "自然语音")
-        }
     }
 }
 
 @Composable
-private fun AbilityChip(text: String) {
-    Surface(shape = RoundedCornerShape(9.dp), color = MaterialTheme.colorScheme.secondary) {
-        Text(text, modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSecondary)
-    }
-}
-
-@Composable
-private fun ComposerArea(
-    input: String,
-    isStreaming: Boolean,
-    onInput: (String) -> Unit,
-    onSend: () -> Unit,
-    onStop: () -> Unit
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),
-        shape = RoundedCornerShape(21.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            OutlinedTextField(
-                value = input,
-                onValueChange = onInput,
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("发消息…", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color.Transparent,
-                    unfocusedBorderColor = Color.Transparent
-                ),
-                maxLines = 6
-            )
-
+private fun ComposerArea(input: String, isStreaming: Boolean, onInput: (String) -> Unit, onSend: () -> Unit, onStop: () -> Unit) {
+    Surface(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp), shape = RoundedCornerShape(21.dp), color = MaterialTheme.colorScheme.surface, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+        Row(modifier = Modifier.fillMaxWidth().padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(value = input, onValueChange = onInput, modifier = Modifier.weight(1f), placeholder = { Text("发消息…", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }, colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent), maxLines = 6)
             if (isStreaming) {
-                IconButton(onClick = onStop, modifier = Modifier.size(38.dp)) {
-                    Icon(Icons.Default.Stop, "停止生成", tint = MaterialTheme.colorScheme.error)
-                }
+                IconButton(onClick = onStop, modifier = Modifier.size(38.dp)) { Icon(Icons.Default.Stop, "停止生成", tint = MaterialTheme.colorScheme.error) }
             } else {
-                IconButton(
-                    onClick = onSend,
-                    enabled = input.isNotBlank(),
-                    modifier = Modifier.size(38.dp)
-                ) {
-                    Icon(
-                        Icons.Default.Send, "发送",
-                        tint = if (input.isNotBlank()) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .size(20.dp)
-                            .background(
-                                if (input.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                                CircleShape
-                            )
-                            .padding(4.dp)
-                    )
+                IconButton(onClick = onSend, enabled = input.isNotBlank(), modifier = Modifier.size(38.dp)) {
+                    Icon(Icons.Default.Send, "发送", tint = if (input.isNotBlank()) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp).background(if (input.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant, CircleShape).padding(4.dp))
                 }
             }
         }

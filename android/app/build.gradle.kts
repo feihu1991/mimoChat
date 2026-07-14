@@ -112,4 +112,5 @@ dependencies {
   implementation(libs.markwon.core)
   implementation(libs.markwon.ext.strikethrough)
   implementation(libs.markwon.syntaxhighlight)
+  implementation("io.noties:prism4j:2.0.0")
 }

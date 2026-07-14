@@ -36,7 +36,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 ChatScreen(
                     messages = messages,
                     role = activeRole,
-                    model = model,
+                    model = viewModel.currentModel,
                     input = input,
                     isStreaming = isStreaming,
                     hasApiKey = viewModel.hasApiKey,
