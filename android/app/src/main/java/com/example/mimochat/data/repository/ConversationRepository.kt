@@ -3,8 +3,6 @@ package com.example.mimochat.data.repository
 import com.example.mimochat.data.*
 import com.example.mimochat.data.local.ConversationDao
 import com.example.mimochat.data.local.MessageDao
-import com.example.mimochat.data.local.ConversationEntity
-import com.example.mimochat.data.local.MessageEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
