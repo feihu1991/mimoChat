@@ -10,7 +10,7 @@ androidxTestRunner = "1.7.0"
 androidxTestEspresso = "3.7.0"
 coroutines = "1.10.2"
 junit = "4.13.2"
-kotlin = "2.3.20"
+kotlin = "2.3.10"
 nav3Core = "1.0.1"
 lifecycleViewmodelNav3 = "2.10.0"
 ktor = "2.3.12"
@@ -58,4 +58,4 @@ markwon-syntaxhighlight = { module = "io.noties.markwon:syntaxhighlight", versio
 android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
-ksp = { id = "com.google.devtools.ksp", version = "2.3.20-1.0.31" }
+ksp = { id = "com.google.devtools.ksp", version = "2.3.10" }
