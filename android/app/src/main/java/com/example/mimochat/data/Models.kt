@@ -15,7 +15,15 @@ enum class MessageStatus {
     STREAMING,
     SUCCESS,
     FAILED,
-    STOPPED
+    STOPPED;
+
+    fun canTransitionTo(target: MessageStatus): Boolean = when (this) {
+        PENDING -> target == STREAMING || target == FAILED
+        STREAMING -> target == SUCCESS || target == FAILED || target == STOPPED
+        else -> false // SUCCESS, FAILED, STOPPED are terminal
+    }
+
+    fun isTerminal(): Boolean = this == SUCCESS || this == FAILED || this == STOPPED
 }
 
 // ── Room Entities ──
