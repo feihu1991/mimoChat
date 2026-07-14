@@ -56,6 +56,8 @@ fun ChatScreen(
         if (messages.size > previousMessageCount && messages.isNotEmpty()) {
             if (messages.last().role == MessageRole.USER) {
                 scrollPolicy.onNewUserMessage()
+                // Immediately scroll to bottom so new message is visible
+                listState.scrollToItem(0)
             }
         }
         previousMessageCount = messages.size

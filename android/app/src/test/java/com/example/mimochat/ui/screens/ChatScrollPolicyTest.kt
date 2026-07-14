@@ -114,4 +114,16 @@ class ChatScrollPolicyTest {
         assertFalse(policy.isNearBottom(1, 100))
         assertFalse(policy.isNearBottom(1, 200))
     }
+
+    // --- Additional: index 0 with offset exactly at threshold is near bottom ---
+    @Test
+    fun `at bottom edge - index 0 offset at threshold is near bottom`() {
+        assertTrue(policy.isNearBottom(0, 50))
+    }
+
+    // --- Additional: index 0 with offset just above threshold is not near bottom ---
+    @Test
+    fun `at bottom edge - index 0 offset above threshold is not near bottom`() {
+        assertFalse(policy.isNearBottom(0, 51))
+    }
 }

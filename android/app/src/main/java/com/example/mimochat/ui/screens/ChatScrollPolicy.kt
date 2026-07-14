@@ -37,7 +37,8 @@ class ChatScrollPolicy {
      * Combines item index and scroll offset for accurate detection.
      */
     fun isNearBottom(firstVisibleItemIndex: Int, firstVisibleItemScrollOffset: Int = 0): Boolean {
-        return firstVisibleItemIndex < AUTO_SCROLL_INDEX_THRESHOLD ||
+        return firstVisibleItemIndex < AUTO_SCROLL_INDEX_THRESHOLD &&
+            (firstVisibleItemIndex != 0 || firstVisibleItemScrollOffset <= AUTO_SCROLL_OFFSET_THRESHOLD) ||
             (firstVisibleItemIndex == AUTO_SCROLL_INDEX_THRESHOLD &&
                 firstVisibleItemScrollOffset <= AUTO_SCROLL_OFFSET_THRESHOLD)
     }
