@@ -76,9 +76,9 @@ class MessageOperationTest {
         )
 
         // 删除 a1 及之后的所有消息
-        repo.deleteById("a1")
-        repo.deleteById("u2")
-        repo.deleteById("a2")
+        repo.deleteMessage("a1")
+        repo.deleteMessage("u2")
+        repo.deleteMessage("a2")
 
         assertEquals(3, fakeMessageDao.deleted.size)
         assertTrue(fakeMessageDao.deleted.contains("a1"))
