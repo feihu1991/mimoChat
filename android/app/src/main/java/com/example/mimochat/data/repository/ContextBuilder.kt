@@ -28,8 +28,8 @@ class ContextBuilder(
      * 构建对话轮次
      */
     data class ConversationTurn(
-        val user: com.example.mimochat.data.local.MessageEntity,
-        val assistant: com.example.mimochat.data.local.MessageEntity?
+        val user: MessageEntity,
+        val assistant: MessageEntity?
     )
 
     suspend fun build(
@@ -96,9 +96,9 @@ class ContextBuilder(
     /**
      * 将消息列表组织为完整轮次（user + assistant 配对）
      */
-    private fun buildTurns(messages: List<com.example.mimochat.data.local.MessageEntity>): List<ConversationTurn> {
+    private fun buildTurns(messages: List<MessageEntity>): List<ConversationTurn> {
         val turns = mutableListOf<ConversationTurn>()
-        var pendingUser: com.example.mimochat.data.local.MessageEntity? = null
+        var pendingUser: MessageEntity? = null
 
         for (msg in messages) {
             when (msg.role) {

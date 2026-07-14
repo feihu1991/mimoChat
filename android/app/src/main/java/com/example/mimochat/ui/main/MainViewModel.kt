@@ -221,7 +221,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (!generationMutex.tryLock()) return@launch
             try {
                 // 插入用户消息
-                val userMsg = com.example.mimochat.data.local.MessageEntity(
+                val userMsg = MessageEntity(
                     conversationId = convId,
                     role = "user",
                     content = clean,
@@ -239,7 +239,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 touchConversation(convId)
 
                 // 插入助手占位
-                val assistantMsg = com.example.mimochat.data.local.MessageEntity(
+                val assistantMsg = MessageEntity(
                     conversationId = convId,
                     role = "assistant",
                     content = "",
@@ -371,7 +371,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 // 创建新的助手占位
-                val newAssistant = com.example.mimochat.data.local.MessageEntity(
+                val newAssistant = MessageEntity(
                     conversationId = convId,
                     role = "assistant",
                     content = "",
@@ -409,7 +409,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 conversationRepo.updateMessageContent(messageId, newText, MessageStatus.SUCCESS)
 
                 // 创建新的助手占位
-                val newAssistant = com.example.mimochat.data.local.MessageEntity(
+                val newAssistant = MessageEntity(
                     conversationId = convId,
                     role = "assistant",
                     content = "",

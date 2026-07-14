@@ -20,15 +20,17 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val conversations by viewModel.conversations.collectAsState()
     val conversationId by viewModel.conversationId.collectAsState()
     val messages by viewModel.currentMessages.collectAsState()
-    val model by viewModel.model.collectAsState()
-    val input by viewModel.input.collectAsState()
     val isStreaming by viewModel.isStreaming.collectAsState()
     val toast by viewModel.toast.collectAsState()
     val theme by viewModel.theme.collectAsState()
     val roles by viewModel.roles.collectAsState()
 
+    // input 由 ChatScreen 内部管理
+    var input by remember { mutableStateOf("") }
+
     val currentConversation = conversations.find { it.id == conversationId }
     val activeRole = roles.find { it.id == currentConversation?.roleId } ?: roles.firstOrNull() ?: DEFAULT_ROLES[0]
+    val currentModel = currentConversation?.model?.let { ModelId.fromApiName(it) } ?: ModelId.MIMO_V2_5
 
     Box(modifier = Modifier.fillMaxSize()) {
         when (screen) {
@@ -36,15 +38,20 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 ChatScreen(
                     messages = messages,
                     role = activeRole,
-                    model = viewModel.currentModel,
+                    model = currentModel,
                     input = input,
                     isStreaming = isStreaming,
                     hasApiKey = viewModel.hasApiKey,
                     onMenu = { viewModel.setDrawerOpen(true) },
-                    onNew = { viewModel.startNewConversation() },
+                    onNew = { viewModel.startNewConversation(); input = "" },
                     onModel = { viewModel.setModelOpen(true) },
-                    onInput = { viewModel.setInput(it) },
-                    onSend = { viewModel.sendMessage() },
+                    onInput = { input = it },
+                    onSend = {
+                        if (input.isNotBlank()) {
+                            viewModel.sendMessage(input)
+                            input = ""
+                        }
+                    },
                     onStop = { viewModel.stopGeneration() },
                     onRetry = { viewModel.retryMessage(it) },
                     onRegenerate = { viewModel.regenerateMessage(it) },
@@ -99,14 +106,14 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             }
         }
 
-        // History drawer (overlay)
+        // History drawer
         if (drawerOpen) {
             HistoryDrawer(
                 conversations = conversations,
                 roles = roles,
                 currentId = conversationId,
                 onClose = { viewModel.setDrawerOpen(false) },
-                onNew = { viewModel.startNewConversation() },
+                onNew = { viewModel.startNewConversation(); input = "" },
                 onSelect = { id -> viewModel.selectConversation(id); viewModel.setDrawerOpen(false) },
                 onSettings = { viewModel.setDrawerOpen(false); viewModel.setScreen(Screen.SETTINGS) },
                 onRename = { id, title -> viewModel.renameConversation(id, title) },
@@ -114,10 +121,10 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             )
         }
 
-        // Model panel (overlay)
+        // Model panel
         if (modelOpen) {
             ModelPanel(
-                model = model,
+                model = currentModel,
                 onClose = { viewModel.setModelOpen(false) },
                 onSelect = { viewModel.setModel(it); viewModel.setModelOpen(false) }
             )
@@ -127,13 +134,13 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         if (toast.isNotBlank()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
                 Surface(
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(12.dp),
                     color = MaterialTheme.colorScheme.inverseSurface,
-                    modifier = androidx.compose.ui.Modifier.padding(bottom = 100.dp)
+                    modifier = Modifier.padding(bottom = 100.dp)
                 ) {
-                    androidx.compose.material3.Text(
+                    Text(
                         toast,
-                        modifier = androidx.compose.ui.Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
                         color = MaterialTheme.colorScheme.inverseOnSurface
                     )
                 }
