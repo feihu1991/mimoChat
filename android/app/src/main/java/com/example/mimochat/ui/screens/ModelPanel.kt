@@ -16,91 +16,62 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.mimochat.data.ModelId
-import com.example.mimochat.theme.*
 
 @Composable
 fun ModelPanel(
     model: ModelId,
     onClose: () -> Unit,
-    onSelect: (ModelId) -> Unit,
-    modifier: Modifier = Modifier
+    onSelect: (ModelId) -> Unit
 ) {
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.32f))
-            .clickable(onClick = onClose)
+    Surface(
+        modifier = Modifier.fillMaxSize().clickable(onClick = onClose),
+        color = Color.Black.copy(alpha = 0.3f)
     ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.BottomCenter),
-            shape = RoundedCornerShape(topStart = 29.dp, topEnd = 29.dp),
-            color = MaterialTheme.colorScheme.background
+        Column(
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.4f).align(Alignment.BottomCenter),
+            verticalArrangement = Arrangement.Bottom
         ) {
-            Column(
-                modifier = Modifier.padding(bottom = 34.dp)
+            Surface(
+                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+                color = MaterialTheme.colorScheme.surface
             ) {
-                // Grabber
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 9.dp, bottom = 8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    // Grabber
                     Box(
-                        modifier = Modifier
-                            .width(38.dp)
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.outline)
+                        modifier = Modifier.width(40.dp).height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(MaterialTheme.colorScheme.outlineVariant)
+                            .align(Alignment.CenterHorizontally)
                     )
-                }
+                    Spacer(Modifier.height(16.dp))
 
-                // Header
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 17.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "选择对话模型",
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold
+                    Text("选择对话模型", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Spacer(Modifier.height(16.dp))
+
+                    // MiMo 2.5
+                    ModelOption(
+                        selected = model == ModelId.MIMO_V2_5,
+                        icon = Icons.Default.AutoAwesome,
+                        iconColor = Color(0xFFf06c3b),
+                        title = ModelId.MIMO_V2_5.displayName,
+                        subtitle = "快速回答 · 文字、图片多模态理解",
+                        onClick = { onSelect(ModelId.MIMO_V2_5) }
                     )
-                    IconButton(onClick = onClose) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = null,
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
+
+                    Spacer(Modifier.height(8.dp))
+
+                    // MiMo 2.5 Pro
+                    ModelOption(
+                        selected = model == ModelId.MIMO_V2_5_PRO,
+                        icon = Icons.Default.Psychology,
+                        iconColor = Color(0xFF6750A4),
+                        title = ModelId.MIMO_V2_5_PRO.displayName,
+                        subtitle = "深度回答 · 复杂推理与长任务",
+                        onClick = { onSelect(ModelId.MIMO_V2_5_PRO) }
+                    )
+
+                    Spacer(Modifier.height(8.dp))
                 }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Model options
-                ModelOption(
-                    icon = Icons.Default.Star,
-                    title = "MiMo v2.5",
-                    description = "默认 · 文字、图片、音频多模态理解",
-                    isSelected = model == ModelId.MIMO_V2_5,
-                    onClick = { onSelect(ModelId.MIMO_V2_5) },
-                    modifier = Modifier.padding(horizontal = 17.dp)
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                ModelOption(
-                    icon = Icons.Default.Psychology,
-                    title = "MiMo v2.5 Pro",
-                    description = "复杂推理与长任务；语音先经 ASR 转写",
-                    isSelected = model == ModelId.MIMO_V2_5_PRO,
-                    onClick = { onSelect(ModelId.MIMO_V2_5_PRO) },
-                    modifier = Modifier.padding(horizontal = 17.dp)
-                )
             }
         }
     }
@@ -108,70 +79,36 @@ fun ModelPanel(
 
 @Composable
 private fun ModelOption(
+    selected: Boolean,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
+    iconColor: Color,
     title: String,
-    description: String,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    subtitle: String,
+    onClick: () -> Unit
 ) {
     Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(17.dp),
-        color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else MaterialTheme.colorScheme.surface,
-        border = if (isSelected) {
-            ButtonDefaults.outlinedButtonBorder.copy(
-                brush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
-            )
-        } else {
-            ButtonDefaults.outlinedButtonBorder
-        }
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(13.dp))
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
+                modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(iconColor.copy(alpha = 0.15f)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
+                Icon(icon, null, tint = iconColor, modifier = Modifier.size(22.dp))
             }
-
-            Spacer(modifier = Modifier.width(10.dp))
-
-            Column(
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(
-                    text = title,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = description,
-                    fontSize = 8.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.SemiBold)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-
-            if (isSelected) {
-                Icon(
-                    imageVector = Icons.Default.Check,
-                    contentDescription = null,
-                    modifier = Modifier.size(17.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
+            if (selected) {
+                Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
             }
         }
     }

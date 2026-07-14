@@ -1,29 +1,88 @@
 package com.example.mimochat.data
 
+import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
+import androidx.room.PrimaryKey
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
+import java.util.UUID
 
-@Serializable
-enum class ModelId {
-    MIMO_V2_5,
-    MIMO_V2_5_PRO
+// ── Message Status ──
+
+enum class MessageStatus {
+    PENDING,
+    STREAMING,
+    SUCCESS,
+    FAILED,
+    STOPPED
 }
 
-@Serializable
+// ── Room Entities ──
+
+@Entity(tableName = "conversations")
+data class ConversationEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val title: String = "新对话",
+    val roleId: String = "mimo",
+    val model: String = "mimo-v2.5",
+    val systemPrompt: String = "",
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "messages",
+    foreignKeys = [ForeignKey(
+        entity = ConversationEntity::class,
+        parentColumns = ["id"],
+        childColumns = ["conversationId"],
+        onDelete = ForeignKey.CASCADE
+    )],
+    indices = [Index("conversationId")]
+)
+data class MessageEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val conversationId: String,
+    val role: String, // "user" | "assistant" | "system"
+    val content: String = "",
+    val status: MessageStatus = MessageStatus.SUCCESS,
+    val errorMessage: String? = null,
+    val model: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "memories")
+data class MemoryEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val content: String,
+    val enabled: Boolean = true,
+    val category: String? = null,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+// ── UI Models (non-persistent) ──
+
+enum class ModelId(val displayName: String, val apiName: String) {
+    MIMO_V2_5("MiMo 2.5", "mimo-v2.5"),
+    MIMO_V2_5_PRO("MiMo 2.5 Pro", "mimo-v2.5-pro");
+
+    companion object {
+        fun fromApiName(name: String): ModelId =
+            entries.firstOrNull { it.apiName == name } ?: MIMO_V2_5
+    }
+}
+
 enum class Screen {
-    CHAT,
-    SETTINGS,
-    CONNECTION,
-    ROLES,
-    MEMORY
+    CHAT, SETTINGS, CONNECTION, ROLES, MEMORY
 }
 
-@Serializable
-enum class VoiceModel {
-    MIMO_V2_5_TTS,
-    MIMO_V2_5_TTS_VOICECLONE
+enum class VoiceModel(val apiName: String) {
+    MIMO_V2_5_TTS("mimo-v2.5-tts"),
+    MIMO_V2_5_TTS_VOICECLONE("mimo-v2.5-tts-voiceclone")
 }
 
-@Serializable
 data class Role(
     val id: String,
     val name: String,
@@ -37,7 +96,6 @@ data class Role(
     val color: String
 )
 
-@Serializable
 data class Attachment(
     val id: String,
     val name: String,
@@ -45,35 +103,30 @@ data class Attachment(
     val url: String? = null
 )
 
-@Serializable
-enum class AttachmentType {
-    IMAGE,
-    FILE
-}
+enum class AttachmentType { IMAGE, FILE }
 
-@Serializable
 data class Message(
     val id: String,
     val role: MessageRole,
     val text: String,
+    val status: MessageStatus = MessageStatus.SUCCESS,
+    val errorMessage: String? = null,
     val model: ModelId? = null,
     val attachments: List<Attachment> = emptyList()
 )
 
-@Serializable
-enum class MessageRole {
-    USER,
-    ASSISTANT
-}
+enum class MessageRole { USER, ASSISTANT, SYSTEM }
 
-@Serializable
 data class Conversation(
     val id: String,
     val title: String,
     val roleId: String,
     val updated: String,
+    val model: ModelId = ModelId.MIMO_V2_5,
     val messages: List<Message> = emptyList()
 )
+
+// ── Connection ──
 
 @Serializable
 data class MimoConnection(
@@ -83,20 +136,10 @@ data class MimoConnection(
 )
 
 @Serializable
-enum class AuthMode {
-    API_KEY,
-    BEARER
-}
+enum class AuthMode { API_KEY, BEARER }
 
-@Serializable
-enum class ProbeStatus {
-    TESTING,
-    PASSED,
-    REACHABLE,
-    FAILED
-}
+enum class ProbeStatus { TESTING, PASSED, REACHABLE, FAILED }
 
-@Serializable
 data class ProbeResult(
     val model: String,
     val capability: String,
@@ -105,75 +148,41 @@ data class ProbeResult(
     val detail: String
 )
 
+enum class ThemeMode { LIGHT, DARK, SYSTEM }
+
+enum class ConnectionPhase { IDLE, LOADING, TESTING, DONE }
+
+// ── Voice Chat State Machine ──
+
+enum class VoiceChatState {
+    IDLE, LISTENING, TRANSCRIBING, THINKING, SPEAKING, ERROR
+}
+
+// ── Defaults ──
+
 val DEFAULT_ROLES = listOf(
     Role(
-        id = "mimo",
-        name = "MiMo",
-        description = "日常陪伴与多模态助手",
+        id = "mimo", name = "MiMo", description = "日常陪伴与多模态助手",
         prompt = "你是 MiMo，一个温暖、直接、可靠的私人助手。回答要自然简洁，必要时主动梳理重点。",
         capabilities = "日常对话、看图、整理信息",
-        voiceModel = VoiceModel.MIMO_V2_5_TTS,
-        voiceName = "Chloe",
+        voiceModel = VoiceModel.MIMO_V2_5_TTS, voiceName = "Chloe",
         voicePrompt = "温暖、清晰、自然的中文声音，语速适中，像一位可靠的朋友在面对面聊天。",
         color = "#f06c3b"
     ),
     Role(
-        id = "study",
-        name = "知夏",
-        description = "耐心的学习搭子",
+        id = "study", name = "知夏", description = "耐心的学习搭子",
         prompt = "你是一位耐心的学习搭子知夏。用启发式提问帮助用户理解，不要直接堆砌答案。",
         capabilities = "学习辅导、知识讲解、复盘",
-        voiceModel = VoiceModel.MIMO_V2_5_TTS,
-        voiceName = "Chloe",
+        voiceModel = VoiceModel.MIMO_V2_5_TTS, voiceName = "Chloe",
         voicePrompt = "温柔、耐心、清楚的女声，语气有鼓励感，重点处稍微放慢。",
         color = "#5f7f73"
     ),
     Role(
-        id = "editor",
-        name = "木棉",
-        description = "文字与灵感编辑",
+        id = "editor", name = "木棉", description = "文字与灵感编辑",
         prompt = "你是文字编辑木棉。擅长提炼表达、改写文案和激发创意，保持克制、有品位。",
         capabilities = "写作、改写、创意构思",
-        voiceModel = VoiceModel.MIMO_V2_5_TTS,
-        voiceName = "Chloe",
+        voiceModel = VoiceModel.MIMO_V2_5_TTS, voiceName = "Chloe",
         voicePrompt = "干净、克制、略带磁性的中性声音，句尾收得利落，像一位编辑在读稿。",
         color = "#8d6c58"
-    )
-)
-
-val STARTER_CONVERSATIONS = listOf(
-    Conversation(
-        id = "current",
-        title = "新对话",
-        roleId = "mimo",
-        updated = "刚刚"
-    ),
-    Conversation(
-        id = "weekend",
-        title = "周末旅行计划",
-        roleId = "mimo",
-        updated = "昨天",
-        messages = listOf(
-            Message(
-                id = "w1",
-                role = MessageRole.ASSISTANT,
-                text = "杭州两日路线已经整理好了。",
-                model = ModelId.MIMO_V2_5
-            )
-        )
-    ),
-    Conversation(
-        id = "meeting",
-        title = "会议录音整理",
-        roleId = "study",
-        updated = "周五",
-        messages = listOf(
-            Message(
-                id = "m1",
-                role = MessageRole.ASSISTANT,
-                text = "录音重点已经整理为四项待办。",
-                model = ModelId.MIMO_V2_5
-            )
-        )
     )
 )

@@ -1,375 +1,164 @@
 package com.example.mimochat.ui.screens
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.mimochat.data.*
-import com.example.mimochat.ui.main.ConnectionPhase
-import com.example.mimochat.theme.*
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConnectionScreen(
-    onBack: () -> Unit,
     connection: MimoConnection,
-    onConnectionChange: (MimoConnection) -> Unit,
-    probeResults: List<ProbeResult>,
     phase: ConnectionPhase,
     error: String,
+    probeResults: List<ProbeResult>,
+    onBack: () -> Unit,
     onConnect: () -> Unit,
-    modifier: Modifier = Modifier
+    onSave: (MimoConnection) -> Unit
 ) {
+    var baseUrl by remember { mutableStateOf(connection.baseUrl) }
+    var apiKey by remember { mutableStateOf(connection.apiKey) }
     var showKey by remember { mutableStateOf(false) }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-    ) {
-        // Page header
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(58.dp)
-                .padding(horizontal = 13.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = "返回"
-                )
-            }
-            Spacer(modifier = Modifier.weight(1f))
-            Text(
-                text = "模型服务",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.weight(1f))
-            Spacer(modifier = Modifier.size(42.dp))
-        }
+    Column(modifier = Modifier.fillMaxSize()) {
+        TopAppBar(
+            title = { Text("模型服务") },
+            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") } }
+        )
 
-        // Connection scroll
         Column(
             modifier = Modifier
-                .weight(1f)
-                .padding(18.dp)
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Connection intro
-            Row(
-                modifier = Modifier.padding(bottom = 18.dp),
-                verticalAlignment = Alignment.CenterVertically
+            // Intro
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f))
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(RoundedCornerShape(17.dp))
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Cable,
-                        contentDescription = null,
-                        modifier = Modifier.size(24.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                Column {
-                    Text(
-                        text = "连接模型服务",
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "保存后自动加载模型列表并逐一验证能力。",
-                        fontSize = 8.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            // Config form
-            Surface(
-                shape = RoundedCornerShape(19.dp),
-                color = MaterialTheme.colorScheme.surface
-            ) {
-                Column(
-                    modifier = Modifier.padding(13.dp)
-                ) {
-                    // Base URL
-                    Column(
-                        modifier = Modifier.padding(vertical = 11.dp)
-                    ) {
-                        Text(
-                            text = "模型地址",
-                            fontSize = 8.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(bottom = 6.dp)
-                        )
-                        OutlinedTextField(
-                            value = connection.baseUrl,
-                            onValueChange = { onConnectionChange(connection.copy(baseUrl = it)) },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = Color.Transparent,
-                                unfocusedBorderColor = Color.Transparent
-                            )
-                        )
-                    }
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-
-                    // API Key
-                    Column(
-                        modifier = Modifier.padding(vertical = 11.dp)
-                    ) {
-                        Text(
-                            text = "API Key",
-                            fontSize = 8.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(bottom = 6.dp)
-                        )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            OutlinedTextField(
-                                value = connection.apiKey,
-                                onValueChange = { onConnectionChange(connection.copy(apiKey = it)) },
-                                modifier = Modifier.weight(1f),
-                                placeholder = {
-                                    Text(
-                                        text = "输入密钥",
-                                        fontSize = 10.sp
-                                    )
-                                },
-                                visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = Color.Transparent,
-                                    unfocusedBorderColor = Color.Transparent
-                                )
-                            )
-                            IconButton(onClick = { showKey = !showKey }) {
-                                Icon(
-                                    imageVector = if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-
-                    // Auth mode
-                    Column(
-                        modifier = Modifier.padding(vertical = 11.dp)
-                    ) {
-                        Text(
-                            text = "认证方式",
-                            fontSize = 8.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(bottom = 6.dp)
-                        )
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(11.dp))
-                                .background(MaterialTheme.colorScheme.secondary)
-                                .padding(3.dp),
-                            horizontalArrangement = Arrangement.spacedBy(3.dp)
-                        ) {
-                            AuthModeButton(
-                                label = "api-key",
-                                isSelected = connection.authMode == AuthMode.API_KEY,
-                                onClick = { onConnectionChange(connection.copy(authMode = AuthMode.API_KEY)) },
-                                modifier = Modifier.weight(1f)
-                            )
-                            AuthModeButton(
-                                label = "Bearer",
-                                isSelected = connection.authMode == AuthMode.BEARER,
-                                onClick = { onConnectionChange(connection.copy(authMode = AuthMode.BEARER)) },
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
+                Row(modifier = Modifier.padding(16.dp)) {
+                    Icon(Icons.Default.Cloud, null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text("连接模型服务", fontWeight = FontWeight.SemiBold)
+                        Text("配置 MiMo API 地址和 Key，保存后自动检测可用模型。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(11.dp))
+            // Form
+            OutlinedTextField(
+                value = baseUrl,
+                onValueChange = { baseUrl = it.trim() },
+                label = { Text("模型地址") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                placeholder = { Text("https://api.xiaomimimo.com/v1") }
+            )
+
+            OutlinedTextField(
+                value = apiKey,
+                onValueChange = { apiKey = it.trim() },
+                label = { Text("API Key") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { showKey = !showKey }) {
+                        Icon(if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility, null)
+                    }
+                }
+            )
 
             // Connect button
             Button(
-                onClick = onConnect,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(44.dp),
-                shape = RoundedCornerShape(15.dp),
-                enabled = phase == ConnectionPhase.IDLE
+                onClick = {
+                    val finalUrl = if (baseUrl.startsWith("http")) baseUrl else "https://$baseUrl"
+                    onSave(MimoConnection(baseUrl = finalUrl, apiKey = apiKey))
+                    onConnect()
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = phase != ConnectionPhase.LOADING && phase != ConnectionPhase.TESTING
             ) {
+                if (phase == ConnectionPhase.LOADING || phase == ConnectionPhase.TESTING) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                }
                 Text(
-                    text = when (phase) {
-                        ConnectionPhase.LOADING -> "正在加载模型"
-                        ConnectionPhase.TESTING -> "正在检测 ${probeResults.count { it.status == ProbeStatus.PASSED || it.status == ProbeStatus.REACHABLE }}/${probeResults.size}"
-                        ConnectionPhase.DONE -> "连接完成"
-                        else -> "连接并自动检测"
-                    },
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold
+                    when (phase) {
+                        ConnectionPhase.LOADING -> "正在加载模型…"
+                        ConnectionPhase.TESTING -> "正在检测…"
+                        ConnectionPhase.DONE -> "重新连接"
+                        ConnectionPhase.IDLE -> "连接并检测"
+                    }
                 )
             }
 
             // Error
-            if (error.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.1f)
+            if (error.isNotBlank()) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text(
-                        text = error,
-                        modifier = Modifier.padding(10.dp),
-                        fontSize = 8.sp,
-                        color = MaterialTheme.colorScheme.error
-                    )
+                    Row(modifier = Modifier.padding(12.dp)) {
+                        Icon(Icons.Default.Error, null, tint = MaterialTheme.colorScheme.error)
+                        Spacer(Modifier.width(8.dp))
+                        Text(error, color = MaterialTheme.colorScheme.onErrorContainer)
+                    }
                 }
             }
 
             // Probe results
             if (probeResults.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(17.dp))
-
-                Row(
-                    modifier = Modifier.padding(bottom = 7.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = "能力体检",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Text(
-                        text = "${probeResults.count { it.status == ProbeStatus.PASSED || it.status == ProbeStatus.REACHABLE }}/${probeResults.size} 通过",
-                        fontSize = 8.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text("模型检测结果", fontWeight = FontWeight.SemiBold)
+                val passed = probeResults.count { it.status == ProbeStatus.PASSED || it.status == ProbeStatus.REACHABLE }
+                Text("$passed/${probeResults.size} 通过", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                 probeResults.forEach { result ->
-                    ProbeResultItem(result = result)
-                    Spacer(modifier = Modifier.height(6.dp))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AuthModeButton(
-    label: String,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(8.dp),
-        color = if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent,
-        shadowElevation = if (isSelected) 2.dp else 0.dp
-    ) {
-        Text(
-            text = label,
-            modifier = Modifier.padding(6.dp),
-            fontSize = 8.sp,
-            color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
-private fun ProbeResultItem(result: ProbeResult) {
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surface
-    ) {
-        Row(
-            modifier = Modifier.padding(9.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(27.dp)
-                    .clip(RoundedCornerShape(9.dp))
-                    .background(
-                        when (result.status) {
-                            ProbeStatus.FAILED -> FailedBackground
-                            else -> SuccessBackground
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = when (result.status) {
+                                ProbeStatus.PASSED, ProbeStatus.REACHABLE -> MaterialTheme.colorScheme.surfaceVariant
+                                ProbeStatus.FAILED -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                                ProbeStatus.TESTING -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            }
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            when (result.status) {
+                                ProbeStatus.TESTING -> CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                ProbeStatus.FAILED -> Icon(Icons.Default.Close, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                                else -> Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(result.model, fontWeight = FontWeight.Medium)
+                                Text("${result.capability} · ${result.detail}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (result.latency != null) {
+                                Text("${result.latency}ms", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                when (result.status) {
-                    ProbeStatus.TESTING -> CircularProgressIndicator(
-                        modifier = Modifier.size(13.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    ProbeStatus.FAILED -> Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = null,
-                        modifier = Modifier.size(13.dp),
-                        tint = FailedColor
-                    )
-                    else -> Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = null,
-                        modifier = Modifier.size(13.dp),
-                        tint = SuccessColor
-                    )
+                    }
                 }
-            }
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            Column(
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(
-                    text = result.model,
-                    fontSize = 8.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1
-                )
-                Text(
-                    text = "${result.capability} · ${result.detail}",
-                    fontSize = 7.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1
-                )
-            }
-
-            if (result.latency != null) {
-                Text(
-                    text = "${result.latency}ms",
-                    fontSize = 7.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
         }
     }

@@ -2,6 +2,7 @@ plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.kotlin.serialization)
+  alias(libs.plugins.ksp)
 }
 
 android {
@@ -90,4 +91,17 @@ dependencies {
 
   // Image loading
   implementation(libs.coil.compose)
+
+  // Room database
+  implementation(libs.room.runtime)
+  implementation(libs.room.ktx)
+  ksp(libs.room.compiler)
+
+  // Security
+  implementation(libs.security.crypto)
+
+  // Markdown rendering
+  implementation(libs.markwon.core)
+  implementation(libs.markwon.ext.strikethrough)
+  implementation(libs.markwon.syntaxhighlight)
 }

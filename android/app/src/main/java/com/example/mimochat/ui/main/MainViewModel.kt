@@ -5,25 +5,31 @@ import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.mimochat.data.*
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
+import com.example.mimochat.data.local.AppDatabase
+import com.example.mimochat.data.local.SettingsStorage
+import com.example.mimochat.data.remote.MimoClient
+import com.example.mimochat.data.remote.StreamChunk
+import com.example.mimochat.data.repository.ChatRepository
+import com.example.mimochat.data.repository.ConversationRepository
+import com.example.mimochat.data.repository.toEntity
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
-    private val sharedPreferences = application.getSharedPreferences("mimo_chat", Context.MODE_PRIVATE)
+    private val db = AppDatabase.getInstance(application)
+    private val settingsStorage = SettingsStorage(application)
+    private val conversationRepo = ConversationRepository(db.conversationDao(), db.messageDao())
+    private val chatRepo = ChatRepository(db.messageDao(), db.memoryDao(), settingsStorage)
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
+    // ── UI State ──
     private val _screen = MutableStateFlow(Screen.CHAT)
     val screen: StateFlow<Screen> = _screen.asStateFlow()
 
     private val _drawerOpen = MutableStateFlow(false)
     val drawerOpen: StateFlow<Boolean> = _drawerOpen.asStateFlow()
-
-    private val _attachmentOpen = MutableStateFlow(false)
-    val attachmentOpen: StateFlow<Boolean> = _attachmentOpen.asStateFlow()
 
     private val _modelOpen = MutableStateFlow(false)
     val modelOpen: StateFlow<Boolean> = _modelOpen.asStateFlow()
@@ -34,14 +40,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _roles = MutableStateFlow(loadRoles())
     val roles: StateFlow<List<Role>> = _roles.asStateFlow()
 
-    private val _defaultRoleId = MutableStateFlow(sharedPreferences.getString("mimo-default-role", "mimo") ?: "mimo")
+    private val _defaultRoleId = MutableStateFlow(settingsStorage.defaultRoleId)
     val defaultRoleId: StateFlow<String> = _defaultRoleId.asStateFlow()
 
-    private val _conversations = MutableStateFlow(loadConversations())
-    val conversations: StateFlow<List<Conversation>> = _conversations.asStateFlow()
-
-    private val _conversationId = MutableStateFlow("current")
-    val conversationId: StateFlow<String> = _conversationId.asStateFlow()
+    private val _conversationId = MutableStateFlow<String?>(null)
+    val conversationId: StateFlow<String?> = _conversationId.asStateFlow()
 
     private val _model = MutableStateFlow(ModelId.MIMO_V2_5)
     val model: StateFlow<ModelId> = _model.asStateFlow()
@@ -49,29 +52,332 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _input = MutableStateFlow("")
     val input: StateFlow<String> = _input.asStateFlow()
 
-    private val _attachments = MutableStateFlow<List<Attachment>>(emptyList())
-    val attachments: StateFlow<List<Attachment>> = _attachments.asStateFlow()
-
-    private val _thinking = MutableStateFlow(false)
-    val thinking: StateFlow<Boolean> = _thinking.asStateFlow()
-
-    private val _recording = MutableStateFlow(false)
-    val recording: StateFlow<Boolean> = _recording.asStateFlow()
-
-    private val _voiceStatus = MutableStateFlow("")
-    val voiceStatus: StateFlow<String> = _voiceStatus.asStateFlow()
-
     private val _toast = MutableStateFlow("")
     val toast: StateFlow<String> = _toast.asStateFlow()
 
-    private val _playingMessageId = MutableStateFlow<String?>(null)
-    val playingMessageId: StateFlow<String?> = _playingMessageId.asStateFlow()
+    private val _isStreaming = MutableStateFlow(false)
+    val isStreaming: StateFlow<Boolean> = _isStreaming.asStateFlow()
 
-    private val _connection = MutableStateFlow(loadConnection())
-    val connection: StateFlow<MimoConnection> = _connection.asStateFlow()
+    // ── Streaming Job ──
+    private var streamingJob: Job? = null
 
-    private val _probeResults = MutableStateFlow<List<ProbeResult>>(emptyList())
-    val probeResults: StateFlow<List<ProbeResult>> = _probeResults.asStateFlow()
+    // ── Data Flows ──
+    val conversations: StateFlow<List<ConversationEntity>> =
+        conversationRepo.getAllConversationsFlow()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val currentMessages: StateFlow<List<Message>> =
+        _conversationId.filterNotNull().flatMapLatest { id ->
+            conversationRepo.getMessagesFlow(id)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val activeRole: Role
+        get() {
+            val conv = conversations.value.find { it.id == _conversationId.value }
+            return _roles.value.find { it.id == conv?.roleId } ?: _roles.value.firstOrNull() ?: DEFAULT_ROLES[0]
+        }
+
+    val currentConversation: ConversationEntity?
+        get() = conversations.value.find { it.id == _conversationId.value }
+
+    val resolvedTheme: ThemeMode
+        get() {
+            val t = _theme.value
+            return if (t == ThemeMode.DARK || (t == ThemeMode.SYSTEM && isSystemDarkTheme())) ThemeMode.DARK
+            else ThemeMode.LIGHT
+        }
+
+    val hasApiKey: Boolean get() = settingsStorage.hasApiKey()
+
+    init {
+        // 初始化：加载或创建默认会话
+        viewModelScope.launch {
+            val convs = conversationRepo.getAllConversationsFlow().first()
+            if (convs.isEmpty()) {
+                val id = conversationRepo.createConversation(roleId = _defaultRoleId.value)
+                _conversationId.value = id
+            } else {
+                _conversationId.value = convs.first().id
+            }
+        }
+    }
+
+    // ── Theme ──
+
+    private fun loadTheme(): ThemeMode {
+        return when (settingsStorage.theme) {
+            "light" -> ThemeMode.LIGHT
+            "dark" -> ThemeMode.DARK
+            else -> ThemeMode.SYSTEM
+        }
+    }
+
+    private fun isSystemDarkTheme(): Boolean {
+        val uiMode = getApplication<Application>().resources.configuration.uiMode
+        return (uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                android.content.res.Configuration.UI_MODE_NIGHT_YES
+    }
+
+    fun setTheme(theme: ThemeMode) {
+        _theme.value = theme
+        settingsStorage.theme = when (theme) {
+            ThemeMode.LIGHT -> "light"
+            ThemeMode.DARK -> "dark"
+            ThemeMode.SYSTEM -> "system"
+        }
+    }
+
+    // ── Roles ──
+
+    private fun loadRoles(): List<Role> {
+        val rolesJson = settingsStorage.rolesJson
+        if (rolesJson.isBlank()) return DEFAULT_ROLES
+        return try {
+            json.decodeFromString<List<Role>>(rolesJson)
+        } catch (_: Exception) { DEFAULT_ROLES }
+    }
+
+    fun setRoles(roles: List<Role>) {
+        _roles.value = roles
+        settingsStorage.rolesJson = json.encodeToString(roles)
+    }
+
+    fun setDefaultRoleId(id: String) {
+        _defaultRoleId.value = id
+        settingsStorage.defaultRoleId = id
+    }
+
+    // ── Navigation ──
+
+    fun setScreen(screen: Screen) { _screen.value = screen }
+    fun setDrawerOpen(open: Boolean) { _drawerOpen.value = open }
+    fun setModelOpen(open: Boolean) { _modelOpen.value = open }
+    fun setInput(input: String) { _input.value = input }
+    fun setModel(model: ModelId) { _model.value = model }
+
+    // ── Conversation Management ──
+
+    fun selectConversation(id: String) {
+        _conversationId.value = id
+        val conv = conversations.value.find { it.id == id }
+        if (conv != null) {
+            _model.value = ModelId.fromApiName(conv.model)
+        }
+    }
+
+    fun startNewConversation() {
+        viewModelScope.launch {
+            val id = conversationRepo.createConversation(
+                roleId = _defaultRoleId.value,
+                model = _model.value
+            )
+            _conversationId.value = id
+            _model.value = ModelId.MIMO_V2_5
+            _drawerOpen.value = false
+            _screen.value = Screen.CHAT
+        }
+    }
+
+    fun renameConversation(id: String, newTitle: String) {
+        viewModelScope.launch {
+            conversationRepo.updateTitle(id, newTitle)
+        }
+    }
+
+    fun deleteConversation(id: String) {
+        viewModelScope.launch {
+            val wasCurrent = _conversationId.value == id
+            conversationRepo.deleteConversation(id)
+            if (wasCurrent) {
+                val remaining = conversations.value.firstOrNull { it.id != id }
+                if (remaining != null) {
+                    _conversationId.value = remaining.id
+                } else {
+                    startNewConversation()
+                }
+            }
+        }
+    }
+
+    fun deleteAllConversations() {
+        viewModelScope.launch {
+            conversationRepo.deleteAllConversations()
+            startNewConversation()
+        }
+    }
+
+    suspend fun searchConversations(query: String): List<ConversationEntity> {
+        return conversationRepo.searchConversations(query)
+    }
+
+    // ── Chat: Send Message ──
+
+    fun sendMessage(text: String = _input.value.trim()) {
+        if (text.isBlank() || _isStreaming.value) return
+        val convId = _conversationId.value ?: return
+
+        _input.value = ""
+
+        viewModelScope.launch {
+            // 插入用户消息
+            val userMsg = MessageEntity(
+                conversationId = convId,
+                role = "user",
+                content = text,
+                status = MessageStatus.SUCCESS
+            )
+            conversationRepo.insertMessage(userMsg)
+
+            // 自动生成标题
+            val conv = conversationRepo.getConversation(convId)
+            if (conv != null && (conv.title == "新对话" || conv.title.isBlank())) {
+                conversationRepo.updateTitle(convId, text.take(14))
+            }
+
+            // 插入助手占位消息
+            val assistantMsg = MessageEntity(
+                conversationId = convId,
+                role = "assistant",
+                content = "",
+                status = MessageStatus.PENDING,
+                model = _model.value.apiName
+            )
+            conversationRepo.insertMessage(assistantMsg)
+
+            // 发送流式请求
+            _isStreaming.value = true
+            streamingJob = viewModelScope.launch {
+                chatRepo.sendStreamingMessage(
+                    conversationId = convId,
+                    userMessageId = userMsg.id,
+                    assistantMessageId = assistantMsg.id,
+                    userText = text,
+                    systemPrompt = activeRole.prompt,
+                    model = _model.value
+                ).collect { chunk ->
+                    when (chunk) {
+                        is StreamChunk.Error -> {
+                            showToast(chunk.message)
+                        }
+                        else -> { /* UI 通过 Flow 自动更新 */ }
+                    }
+                }
+                _isStreaming.value = false
+            }
+        }
+    }
+
+    // ── Stop Generation ──
+
+    fun stopGeneration() {
+        streamingJob?.cancel()
+        streamingJob = null
+        _isStreaming.value = false
+
+        // 标记当前流式消息为 STOPPED
+        viewModelScope.launch {
+            val convId = _conversationId.value ?: return@launch
+            val messages = conversationRepo.getMessages(convId)
+            val streamingMsg = messages.lastOrNull {
+                it.role == "assistant" && it.status == MessageStatus.STREAMING
+            }
+            if (streamingMsg != null) {
+                conversationRepo.updateMessageStatus(streamingMsg.id, MessageStatus.STOPPED)
+            }
+        }
+    }
+
+    // ── Retry ──
+
+    fun retryMessage(messageId: String) {
+        val convId = _conversationId.value ?: return
+        val conv = currentConversation ?: return
+
+        _isStreaming.value = true
+        streamingJob = viewModelScope.launch {
+            conversationRepo.updateMessageContent(messageId, "", MessageStatus.STREAMING)
+
+            chatRepo.retryMessage(
+                conversationId = convId,
+                assistantMessageId = messageId,
+                systemPrompt = activeRole.prompt,
+                model = _model.value
+            ).collect { chunk ->
+                if (chunk is StreamChunk.Error) {
+                    showToast(chunk.message)
+                }
+            }
+            _isStreaming.value = false
+        }
+    }
+
+    // ── Regenerate ──
+
+    fun regenerateMessage(messageId: String) {
+        val convId = _conversationId.value ?: return
+
+        _isStreaming.value = true
+        val newAssistantMsg = MessageEntity(
+            conversationId = convId,
+            role = "assistant",
+            content = "",
+            status = MessageStatus.PENDING,
+            model = _model.value.apiName
+        )
+
+        streamingJob = viewModelScope.launch {
+            conversationRepo.insertMessage(newAssistantMsg)
+
+            chatRepo.regenerateMessage(
+                conversationId = convId,
+                oldAssistantMessageId = messageId,
+                newAssistantMessageId = newAssistantMsg.id,
+                systemPrompt = activeRole.prompt,
+                model = _model.value
+            ).collect { chunk ->
+                if (chunk is StreamChunk.Error) {
+                    showToast(chunk.message)
+                }
+            }
+            _isStreaming.value = false
+        }
+    }
+
+    // ── Edit & Resend ──
+
+    fun editAndResend(messageId: String, newText: String) {
+        val convId = _conversationId.value ?: return
+
+        viewModelScope.launch {
+            // 删除该消息之后的所有消息
+            val messages = conversationRepo.getMessages(convId)
+            val targetIndex = messages.indexOfFirst { it.id == messageId }
+            if (targetIndex < 0) return@launch
+
+            // 删除后续消息
+            for (i in targetIndex + 1 until messages.size) {
+                conversationRepo.deleteMessage(messages[i].id)
+            }
+
+            // 更新用户消息
+            conversationRepo.updateMessageContent(messageId, newText, MessageStatus.SUCCESS)
+
+            // 重新发送
+            _input.value = ""
+            sendMessage(newText)
+        }
+    }
+
+    // ── Copy Message ──
+
+    fun copyMessage(text: String) {
+        val clipboard = getApplication<Application>().getSystemService(Context.CLIPBOARD_SERVICE)
+            as android.content.ClipboardManager
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("mimo_chat", text))
+        showToast("已复制到剪贴板")
+    }
+
+    // ── Connection ──
 
     private val _connectionPhase = MutableStateFlow(ConnectionPhase.IDLE)
     val connectionPhase: StateFlow<ConnectionPhase> = _connectionPhase.asStateFlow()
@@ -79,252 +385,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _connectionError = MutableStateFlow("")
     val connectionError: StateFlow<String> = _connectionError.asStateFlow()
 
-    val currentConversation: Conversation
-        get() = _conversations.value.find { it.id == _conversationId.value } ?: _conversations.value.first()
+    private val _probeResults = MutableStateFlow<List<ProbeResult>>(emptyList())
+    val probeResults: StateFlow<List<ProbeResult>> = _probeResults.asStateFlow()
 
-    val activeRole: Role
-        get() = _roles.value.find { it.id == currentConversation.roleId } ?: _roles.value.first()
+    fun loadConnection(): MimoConnection = settingsStorage.loadConnection()
 
-    val resolvedTheme: ThemeMode
-        get() {
-            val theme = _theme.value
-            return if (theme == ThemeMode.DARK || (theme == ThemeMode.SYSTEM && isSystemDarkTheme())) {
-                ThemeMode.DARK
-            } else {
-                ThemeMode.LIGHT
-            }
-        }
-
-    private fun isSystemDarkTheme(): Boolean {
-        val uiMode = getApplication<Application>().resources.configuration.uiMode
-        return (uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
+    fun saveConnection(connection: MimoConnection) {
+        settingsStorage.saveConnection(connection)
     }
 
-    private fun loadTheme(): ThemeMode {
-        val themeStr = sharedPreferences.getString("mimo-theme", "system") ?: "system"
-        return when (themeStr) {
-            "light" -> ThemeMode.LIGHT
-            "dark" -> ThemeMode.DARK
-            else -> ThemeMode.SYSTEM
-        }
-    }
-
-    private fun loadRoles(): List<Role> {
-        val rolesJson = sharedPreferences.getString("mimo-roles", null)
-        return if (rolesJson != null) {
-            try {
-                json.decodeFromString(rolesJson)
-            } catch (e: Exception) {
-                DEFAULT_ROLES
-            }
-        } else {
-            DEFAULT_ROLES
-        }
-    }
-
-    private fun loadConversations(): List<Conversation> {
-        val conversationsJson = sharedPreferences.getString("mimo-conversations", null)
-        return if (conversationsJson != null) {
-            try {
-                json.decodeFromString(conversationsJson)
-            } catch (e: Exception) {
-                STARTER_CONVERSATIONS
-            }
-        } else {
-            STARTER_CONVERSATIONS
-        }
-    }
-
-    private fun loadConnection(): MimoConnection {
-        val connectionJson = sharedPreferences.getString("mimo-connection", null)
-        return if (connectionJson != null) {
-            try {
-                json.decodeFromString(connectionJson)
-            } catch (e: Exception) {
-                MimoConnection()
-            }
-        } else {
-            MimoConnection()
-        }
-    }
-
-    fun setScreen(screen: Screen) {
-        _screen.value = screen
-    }
-
-    fun setDrawerOpen(open: Boolean) {
-        _drawerOpen.value = open
-    }
-
-    fun setAttachmentOpen(open: Boolean) {
-        _attachmentOpen.value = open
-    }
-
-    fun setModelOpen(open: Boolean) {
-        _modelOpen.value = open
-    }
-
-    fun setTheme(theme: ThemeMode) {
-        _theme.value = theme
-        sharedPreferences.edit().putString("mimo-theme", when (theme) {
-            ThemeMode.LIGHT -> "light"
-            ThemeMode.DARK -> "dark"
-            ThemeMode.SYSTEM -> "system"
-        }).apply()
-    }
-
-    fun setRoles(roles: List<Role>) {
-        _roles.value = roles
-        sharedPreferences.edit().putString("mimo-roles", json.encodeToString(roles)).apply()
-    }
-
-    fun setDefaultRoleId(id: String) {
-        _defaultRoleId.value = id
-        sharedPreferences.edit().putString("mimo-default-role", id).apply()
-    }
-
-    fun setConversationId(id: String) {
-        _conversationId.value = id
-    }
-
-    fun setModel(model: ModelId) {
-        _model.value = model
-    }
-
-    fun setInput(input: String) {
-        _input.value = input
-    }
-
-    fun setAttachments(attachments: List<Attachment>) {
-        _attachments.value = attachments
-    }
-
-    fun addAttachment(attachment: Attachment) {
-        _attachments.value = _attachments.value + attachment
-    }
-
-    fun removeAttachment(id: String) {
-        _attachments.value = _attachments.value.filter { it.id != id }
-    }
-
-    fun startNewConversation() {
-        val id = "chat-${System.currentTimeMillis()}"
-        val newConversation = Conversation(
-            id = id,
-            title = "新对话",
-            roleId = _defaultRoleId.value,
-            updated = "刚刚"
-        )
-        _conversations.value = listOf(newConversation) + _conversations.value
-        _conversationId.value = id
-        _model.value = ModelId.MIMO_V2_5
-        _attachments.value = emptyList()
-        _drawerOpen.value = false
-        _screen.value = Screen.CHAT
-        saveConversations()
-    }
-
-    fun sendPrompt(text: String, fromVoice: Boolean = false) {
-        val clean = text.trim()
-        if ((clean.isEmpty() && _attachments.value.isEmpty()) || _thinking.value) return
-
-        val userMessage = Message(
-            id = "user-${System.currentTimeMillis()}",
-            role = MessageRole.USER,
-            text = clean.ifEmpty { "请分析这些附件" },
-            attachments = _attachments.value
-        )
-
-        val outgoingAttachments = _attachments.value
-        updateConversation { conversation ->
-            conversation.copy(
-                title = if (conversation.messages.isEmpty()) clean.take(14).ifEmpty { "图片对话" } else conversation.title,
-                updated = "刚刚",
-                messages = conversation.messages + userMessage
-            )
-        }
-
-        _input.value = ""
-        _attachments.value = emptyList()
-        _thinking.value = true
-
-        if (fromVoice) {
-            _voiceStatus.value = "${if (_model.value == ModelId.MIMO_V2_5_PRO) "Pro" else "v2.5"} 正在回答"
-        }
-
-        viewModelScope.launch {
-            try {
-                val config = _connection.value
-                val routedModel = if (outgoingAttachments.any { it.type == AttachmentType.IMAGE }) {
-                    ModelId.MIMO_V2_5
-                } else {
-                    _model.value
-                }
-
-                val imageUrls = outgoingAttachments.filter { it.type == AttachmentType.IMAGE && it.url != null }.map { it.url!! }
-
-                val reply = if (config.apiKey.isNotEmpty()) {
-                    MimoClient.chatCompletion(
-                        config,
-                        if (routedModel == ModelId.MIMO_V2_5_PRO) "mimo-v2.5-pro" else "mimo-v2.5",
-                        "${activeRole.prompt}\n\n用户：${clean.ifEmpty { "请分析附件" }}",
-                        imageUrls
-                    )
-                } else {
-                    demoReply(clean, activeRole, routedModel, imageUrls.isNotEmpty())
-                }
-
-                val assistant = Message(
-                    id = "assistant-${System.currentTimeMillis()}",
-                    role = MessageRole.ASSISTANT,
-                    text = reply,
-                    model = routedModel
-                )
-
-                updateConversation { conversation ->
-                    conversation.copy(messages = conversation.messages + assistant)
-                }
-
-                if (fromVoice) {
-                    _voiceStatus.value = "正在生成角色声音"
-                    // TODO: Implement voice playback
-                }
-            } catch (e: Exception) {
-                showToast(e.message ?: "请求失败")
-            } finally {
-                _thinking.value = false
-                _voiceStatus.value = ""
-            }
-        }
-    }
-
-    private fun updateConversation(updater: (Conversation) -> Conversation) {
-        _conversations.value = _conversations.value.map { conversation ->
-            if (conversation.id == _conversationId.value) {
-                updater(conversation)
-            } else {
-                conversation
-            }
-        }
-        saveConversations()
-    }
-
-    private fun saveConversations() {
-        sharedPreferences.edit().putString("mimo-conversations", json.encodeToString(_conversations.value)).apply()
-    }
-
-    fun showToast(message: String) {
-        _toast.value = message.take(80)
-        // In a real app, you'd use a timer to clear the toast
-    }
-
-    fun setConnection(connection: MimoConnection) {
-        _connection.value = connection
-        sharedPreferences.edit().putString("mimo-connection", json.encodeToString(connection)).apply()
+    fun clearApiKey() {
+        settingsStorage.clearApiKey()
     }
 
     fun connect() {
-        val config = _connection.value
+        val config = settingsStorage.loadConnection()
         if (config.baseUrl.isBlank() || config.apiKey.isBlank()) {
             _connectionError.value = "请填写模型地址和 API Key"
             return
@@ -339,17 +414,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val models = MimoClient.loadModels(config)
                 if (models.isEmpty()) throw Exception("没有加载到模型")
 
-                sharedPreferences.edit().putInt("mimo-model-count", models.size).apply()
-                sharedPreferences.edit().putString("mimo-model-list", json.encodeToString(models)).apply()
-
                 _connectionPhase.value = ConnectionPhase.TESTING
                 _probeResults.value = models.map { model ->
-                    ProbeResult(
-                        model = model,
-                        capability = "识别中",
-                        status = ProbeStatus.TESTING,
-                        detail = "正在验证能力"
-                    )
+                    ProbeResult(model = model, capability = "识别中", status = ProbeStatus.TESTING, detail = "正在验证能力")
                 }
 
                 val results = mutableListOf<ProbeResult>()
@@ -361,38 +428,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 _connectionPhase.value = ConnectionPhase.DONE
             } catch (e: Exception) {
-                _connectionError.value = e.message ?: "连接失败"
+                _connectionError.value = MimoClient.translateError(e)
                 _connectionPhase.value = ConnectionPhase.IDLE
             }
         }
     }
 
-    fun playRoleVoice(text: String, messageId: String? = null) {
-        // TODO: Implement voice playback
-    }
+    // ── Toast ──
 
-    fun toggleRecording() {
-        // TODO: Implement recording
-    }
-
-    private fun demoReply(text: String, role: Role, model: ModelId, hasImage: Boolean): String {
-        return when {
-            hasImage -> "我已经看到了这张图片。作为${role.name}，我会先从画面主体、细节和你的目标三个方面来分析。你可以再告诉我最想关注哪一部分。"
-            model == ModelId.MIMO_V2_5_PRO -> "我会先把\"${text.ifEmpty { "这个问题" }}\"拆成目标、约束和行动三部分，再给你一个可以直接执行的方案。"
-            else -> "明白了。关于\"${text.ifEmpty { "这件事" }}\"，我建议先抓住最重要的一步开始。如果你愿意，我可以继续帮你整理成清单。"
+    fun showToast(message: String) {
+        _toast.value = message.take(80)
+        viewModelScope.launch {
+            delay(2500)
+            if (_toast.value == message.take(80)) _toast.value = ""
         }
     }
-}
 
-enum class ThemeMode {
-    LIGHT,
-    DARK,
-    SYSTEM
-}
+    fun clearToast() { _toast.value = "" }
 
-enum class ConnectionPhase {
-    IDLE,
-    LOADING,
-    TESTING,
-    DONE
+    // ── Memory ──
+
+    fun getMemories() = db.memoryDao().getAllFlow()
+
+    fun addMemory(content: String) {
+        viewModelScope.launch {
+            db.memoryDao().upsert(MemoryEntity(content = content))
+        }
+    }
+
+    fun deleteMemory(id: String) {
+        viewModelScope.launch {
+            db.memoryDao().deleteById(id)
+        }
+    }
+
+    fun toggleMemory(id: String, enabled: Boolean) {
+        viewModelScope.launch {
+            db.memoryDao().setEnabled(id, enabled)
+        }
+    }
 }

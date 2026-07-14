@@ -3,407 +3,275 @@ package com.example.mimochat.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.example.mimochat.data.Screen
-import com.example.mimochat.ui.main.ThemeMode
-import com.example.mimochat.theme.*
+import com.example.mimochat.data.*
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onBack: () -> Unit,
-    onOpen: (Screen) -> Unit,
-    roleCount: Int,
+    connection: MimoConnection,
     theme: ThemeMode,
+    roleCount: Int,
+    onBack: () -> Unit,
     onThemeChange: (ThemeMode) -> Unit,
+    onOpenRoles: () -> Unit,
+    onOpenConnection: () -> Unit,
+    onSaveConnection: (MimoConnection) -> Unit,
+    onClearApiKey: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var sound by remember { mutableStateOf(true) }
-    var haptics by remember { mutableStateOf(true) }
-    var sendOnEnter by remember { mutableStateOf(true) }
+    var showApiKeyDialog by remember { mutableStateOf(false) }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-    ) {
-        // Page header
-        PageHeader(
-            title = "设置",
-            onBack = onBack
+    Column(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        // Header
+        TopAppBar(
+            title = { Text("设置", fontWeight = FontWeight.Bold) },
+            navigationIcon = {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
+                }
+            }
         )
 
-        // Settings scroll
         Column(
             modifier = Modifier
-                .weight(1f)
-                .padding(18.dp)
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
         ) {
-            // Private note
+            // Private mode note
             Surface(
-                shape = RoundedCornerShape(19.dp),
-                color = MaterialTheme.colorScheme.tertiary
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
-                    modifier = Modifier.padding(15.dp),
+                    modifier = Modifier.padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Person,
-                        contentDescription = null,
-                        modifier = Modifier.size(31.dp),
-                        tint = MaterialTheme.colorScheme.onTertiary
-                    )
-                    Spacer(modifier = Modifier.width(11.dp))
+                    Icon(Icons.Default.Person, null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(12.dp))
                     Column {
-                        Text(
-                            text = "私人模式",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = "无需登录，数据仅保存在本机",
-                            fontSize = 8.sp,
-                            color = MaterialTheme.colorScheme.onTertiary
-                        )
+                        Text("私人模式", fontWeight = FontWeight.SemiBold, fontSize = MaterialTheme.typography.bodyLarge.fontSize)
+                        Text("无需登录，数据仅保存在本机", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(22.dp))
+            Spacer(Modifier.height(20.dp))
 
-            // Chat settings
-            SettingsGroup(title = "聊天") {
+            // Chat section
+            SectionHeader("聊天")
+            SettingsCard {
                 SettingsRow(
-                    icon = Icons.Default.Group,
+                    icon = Icons.Default.Chat,
                     title = "聊天角色",
-                    detail = "$roleCount 个角色",
-                    onClick = { onOpen(Screen.ROLES) }
+                    detail = "${roleCount} 个角色",
+                    onClick = onOpenRoles
                 )
                 SettingsRow(
-                    icon = Icons.Default.Cable,
+                    icon = Icons.Default.Cloud,
                     title = "模型服务",
-                    detail = "未连接",
-                    onClick = { onOpen(Screen.CONNECTION) }
+                    detail = if (connection.apiKey.isNotBlank()) "已配置" else "未配置",
+                    onClick = onOpenConnection
                 )
             }
 
-            Spacer(modifier = Modifier.height(19.dp))
+            Spacer(Modifier.height(16.dp))
 
-            // Data settings
-            SettingsGroup(title = "数据与偏好") {
+            // API Key section
+            SectionHeader("安全")
+            SettingsCard {
                 SettingsRow(
-                    icon = Icons.Default.Storage,
-                    title = "记忆管理",
-                    detail = "3 条",
-                    onClick = { onOpen(Screen.MEMORY) }
+                    icon = Icons.Default.Key,
+                    title = "API Key",
+                    detail = if (connection.apiKey.isNotBlank()) "••••••••" else "未设置",
+                    onClick = { showApiKeyDialog = true }
                 )
             }
 
-            Spacer(modifier = Modifier.height(19.dp))
+            Spacer(Modifier.height(16.dp))
 
-            // Interaction settings
-            SettingsGroup(title = "交互") {
-                ToggleRow(
-                    title = "语音回复",
-                    detail = "语音聊天时自动播放角色声音",
-                    value = sound,
-                    onChange = { sound = it }
-                )
-                ToggleRow(
-                    title = "触感反馈",
-                    detail = "重要操作使用轻触反馈",
-                    value = haptics,
-                    onChange = { haptics = it }
-                )
-                ToggleRow(
-                    title = "回车发送",
-                    detail = "键盘回车直接发送消息",
-                    value = sendOnEnter,
-                    onChange = { sendOnEnter = it }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(19.dp))
-
-            // Theme settings
-            SettingsGroup(title = "主题") {
-                ThemeRow(
-                    value = theme,
-                    onChange = onThemeChange
-                )
-            }
-
-            Spacer(modifier = Modifier.height(19.dp))
-
-            // About
-            SettingsGroup(title = "关于") {
+            // Theme section
+            SectionHeader("外观")
+            SettingsCard {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "MiMo Chat",
-                        fontSize = 9.sp
-                    )
-                    Text(
-                        text = "本地私人版本 · 0.2.0",
-                        fontSize = 9.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Icon(Icons.Default.Palette, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(24.dp))
+                    Spacer(Modifier.width(16.dp))
+                    Text("主题", modifier = Modifier.weight(1f))
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        ThemeChip("浅色", theme == ThemeMode.LIGHT) { onThemeChange(ThemeMode.LIGHT) }
+                        ThemeChip("深色", theme == ThemeMode.DARK) { onThemeChange(ThemeMode.DARK) }
+                        ThemeChip("系统", theme == ThemeMode.SYSTEM) { onThemeChange(ThemeMode.SYSTEM) }
+                    }
                 }
             }
-        }
-    }
-}
 
-@Composable
-private fun PageHeader(
-    title: String,
-    onBack: () -> Unit,
-    action: @Composable (() -> Unit)? = null
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(58.dp)
-            .padding(horizontal = 13.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        IconButton(onClick = onBack) {
-            Icon(
-                imageVector = Icons.Default.ArrowBack,
-                contentDescription = "返回"
-            )
-        }
+            Spacer(Modifier.height(16.dp))
 
-        Spacer(modifier = Modifier.weight(1f))
-
-        Text(
-            text = title,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold
-        )
-
-        Spacer(modifier = Modifier.weight(1f))
-
-        if (action != null) {
-            action()
-        } else {
-            Spacer(modifier = Modifier.size(42.dp))
-        }
-    }
-}
-
-@Composable
-private fun SettingsGroup(
-    title: String,
-    content: @Composable () -> Unit
-) {
-    Column {
-        Text(
-            text = title,
-            modifier = Modifier.padding(start = 8.dp, bottom = 7.dp),
-            fontSize = 9.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Surface(
-            shape = RoundedCornerShape(17.dp),
-            color = MaterialTheme.colorScheme.surface
-        ) {
-            Column {
-                content()
+            // About
+            SectionHeader("关于")
+            SettingsCard {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("MiMo Chat", fontWeight = FontWeight.Medium)
+                        Text("本地私人版本 · 1.0.0", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
             }
+
+            Spacer(Modifier.height(32.dp))
         }
+    }
+
+    // API Key Dialog
+    if (showApiKeyDialog) {
+        var keyInput by remember { mutableStateOf(connection.apiKey) }
+        var showKey by remember { mutableStateOf(false) }
+        var urlInput by remember { mutableStateOf(connection.baseUrl) }
+
+        AlertDialog(
+            onDismissRequest = { showApiKeyDialog = false },
+            title = { Text("模型服务配置") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = urlInput,
+                        onValueChange = { urlInput = it.trim() },
+                        label = { Text("API 地址") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        placeholder = { Text("https://api.xiaomimimo.com/v1") }
+                    )
+                    OutlinedTextField(
+                        value = keyInput,
+                        onValueChange = { keyInput = it.trim() },
+                        label = { Text("API Key") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { showKey = !showKey }) {
+                                Icon(
+                                    if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = null
+                                )
+                            }
+                        }
+                    )
+                    if (connection.apiKey.isNotBlank()) {
+                        TextButton(
+                            onClick = {
+                                onClearApiKey()
+                                keyInput = ""
+                                showApiKeyDialog = false
+                            },
+                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Text("清除 API Key")
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val baseUrl = urlInput.ifBlank { "https://api.xiaomimimo.com/v1" }
+                    val finalUrl = if (baseUrl.startsWith("http")) baseUrl else "https://$baseUrl"
+                    onSaveConnection(MimoConnection(
+                        baseUrl = finalUrl,
+                        apiKey = keyInput,
+                        authMode = connection.authMode
+                    ))
+                    showApiKeyDialog = false
+                }) {
+                    Text("保存")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showApiKeyDialog = false }) { Text("取消") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun SectionHeader(title: String) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+    )
+}
+
+@Composable
+private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(content = content)
     }
 }
 
 @Composable
 private fun SettingsRow(
-    icon: ImageVector,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
     detail: String? = null,
     onClick: () -> Unit
 ) {
-    Surface(
-        modifier = Modifier.clickable(onClick = onClick),
-        color = Color.Transparent
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(30.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.secondary),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    modifier = Modifier.size(17.dp),
-                    tint = MaterialTheme.colorScheme.onSecondary
-                )
-            }
-
-            Spacer(modifier = Modifier.width(9.dp))
-
-            Text(
-                text = title,
-                modifier = Modifier.weight(1f),
-                fontSize = 10.sp
-            )
-
-            if (detail != null) {
-                Text(
-                    text = detail,
-                    fontSize = 8.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-            }
-
-            Icon(
-                imageVector = Icons.Default.KeyboardArrowRight,
-                contentDescription = null,
-                modifier = Modifier.size(14.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun ToggleRow(
-    title: String,
-    detail: String,
-    value: Boolean,
-    onChange: (Boolean) -> Unit
-) {
-    Surface(
-        modifier = Modifier.clickable { onChange(!value) },
-        color = Color.Transparent
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(58.dp)
-                .padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(
-                    text = title,
-                    fontSize = 10.sp
-                )
-                Text(
-                    text = detail,
-                    fontSize = 8.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            Switch(
-                checked = value,
-                onCheckedChange = onChange,
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = Color.White,
-                    checkedTrackColor = MaterialTheme.colorScheme.primary,
-                    uncheckedThumbColor = Color.White,
-                    uncheckedTrackColor = MaterialTheme.colorScheme.outline
-                )
-            )
-        }
-    }
-}
-
-@Composable
-private fun ThemeRow(
-    value: ThemeMode,
-    onChange: (ThemeMode) -> Unit
-) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(8.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        ThemeButton(
-            icon = Icons.Default.LightMode,
-            label = "浅色",
-            isSelected = value == ThemeMode.LIGHT,
-            onClick = { onChange(ThemeMode.LIGHT) },
-            modifier = Modifier.weight(1f)
-        )
-        ThemeButton(
-            icon = Icons.Default.DarkMode,
-            label = "深色",
-            isSelected = value == ThemeMode.DARK,
-            onClick = { onChange(ThemeMode.DARK) },
-            modifier = Modifier.weight(1f)
-        )
-        ThemeButton(
-            icon = Icons.Default.Computer,
-            label = "跟随系统",
-            isSelected = value == ThemeMode.SYSTEM,
-            onClick = { onChange(ThemeMode.SYSTEM) },
-            modifier = Modifier.weight(1f)
-        )
+        Icon(icon, null, modifier = Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.Medium)
+            if (detail != null) {
+                Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(20.dp))
     }
 }
 
 @Composable
-private fun ThemeButton(
-    icon: ImageVector,
-    label: String,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
+private fun ThemeChip(label: String, selected: Boolean, onClick: () -> Unit) {
     Surface(
-        modifier = modifier
-            .height(54.dp)
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(13.dp),
-        color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else MaterialTheme.colorScheme.secondary
+        onClick = onClick,
+        shape = RoundedCornerShape(8.dp),
+        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
     ) {
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-                tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSecondary
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = label,
-                fontSize = 9.sp,
-                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSecondary
-            )
-        }
+        Text(
+            text = label,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            fontSize = MaterialTheme.typography.bodySmall.fontSize,
+            color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
