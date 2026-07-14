@@ -253,7 +253,7 @@ private fun SmallButton(onClick: () -> Unit, icon: androidx.compose.ui.graphics.
 
 /**
  * Markdown 文本渲染 - 使用 Markwon
- * 优化：缓存 Markwon 实例，代码块支持横向滚动和语言名显示
+ * 优化：缓存 Markwon 实例
  */
 @Composable
 private fun MarkdownText(text: String, modifier: Modifier = Modifier) {
@@ -271,22 +271,12 @@ private fun MarkdownText(text: String, modifier: Modifier = Modifier) {
 
     AndroidView(
         factory = { ctx ->
-            android.widget.ScrollView(ctx).apply {
-                isHorizontalScrollBarEnabled = true
-                val tv = TextView(ctx).apply {
-                    setTextColor(textColor.toArgb())
-                    textSize = 14f
-                    // 代码块横向滚动
-                    setHorizontallyScrolling(true)
-                }
-                addView(tv, android.widget.ScrollView.LayoutParams(
-                    android.widget.ScrollView.LayoutParams.MATCH_PARENT,
-                    android.widget.ScrollView.LayoutParams.WRAP_CONTENT
-                ))
+            TextView(ctx).apply {
+                setTextColor(textColor.toArgb())
+                textSize = 14f
             }
         },
-        update = { scrollView ->
-            val tv = scrollView.getChildAt(0) as TextView
+        update = { tv ->
             markwon.setMarkdown(tv, text)
             tv.setTextColor(textColor.toArgb())
         },
