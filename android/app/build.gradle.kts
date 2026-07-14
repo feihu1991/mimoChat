@@ -48,6 +48,7 @@ configurations.all {
     resolutionStrategy {
         force("org.jetbrains:annotations:24.0.0")
     }
+    exclude(group = "org.jetbrains", module = "annotations-java5")
 }
 
 dependencies {
