@@ -126,7 +126,9 @@ class MessageOperationTest {
 
         repo.updateTitle("conv1", "新标题")
 
-        assertEquals("新标题", fakeConversationDao.updatedTitle["conv1"])
+        val updated = fakeConversationDao.updated.first()
+        assertEquals("新标题", updated.title)
+        assertEquals("conv1", updated.id)
     }
 
     private fun makeMsg(id: String, role: String, content: String, status: MessageStatus = MessageStatus.SUCCESS) =
@@ -161,7 +163,6 @@ class FakeMsgDao : MessageDao {
 class FakeConvDao : ConversationDao {
     var conversations: List<ConversationEntity> = emptyList()
     val deleted = mutableListOf<String>()
-    val updatedTitle = mutableMapOf<String, String>()
     val updated = mutableListOf<ConversationEntity>()
 
     override fun getAllFlow(): Flow<List<ConversationEntity>> = flowOf(conversations)
