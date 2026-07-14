@@ -7,6 +7,7 @@ import com.example.mimochat.data.remote.MimoClient
 import com.example.mimochat.data.remote.StreamChunk
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -157,7 +158,7 @@ class ChatRepository(
             }
         } catch (e: CancellationException) {
             // 用户取消 — 保留已生成内容
-            withContext(Dispatchers.IO) {
+            withContext(NonCancellable + Dispatchers.IO) {
                 val current = messageDao.getById(assistantMessageId)
                 if (current?.status == MessageStatus.STREAMING) {
                     messageDao.updateContent(

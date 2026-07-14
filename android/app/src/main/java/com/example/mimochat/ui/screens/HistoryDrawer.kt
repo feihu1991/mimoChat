@@ -140,7 +140,7 @@ fun HistoryDrawer(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    (role?.name ?: "M").first().toString(),
+                                    role?.name?.firstOrNull()?.toString() ?: "M",
                                     color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold
                                 )
                             }

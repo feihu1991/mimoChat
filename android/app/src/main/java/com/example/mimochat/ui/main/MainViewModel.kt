@@ -18,6 +18,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val db = AppDatabase.getInstance(application)
     private val settingsStorage = SettingsStorage(application)
@@ -220,6 +221,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // Mutex 防重复
             if (!generationMutex.tryLock()) return@launch
             try {
+                val conv = conversationRepo.getConversation(convId) ?: return@launch
+                val role = _roles.value.find { it.id == conv.roleId } ?: DEFAULT_ROLES[0]
+                val model = ModelId.fromApiName(conv.model)
+
                 // 插入用户消息
                 val userMsg = MessageEntity(
                     conversationId = convId,
@@ -230,8 +235,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 conversationRepo.insertMessage(userMsg)
 
                 // 自动生成标题
-                val conv = conversationRepo.getConversation(convId)
-                if (conv != null && (conv.title == "新对话" || conv.title.isBlank())) {
+                if (conv.title == "新对话" || conv.title.isBlank()) {
                     conversationRepo.updateTitle(convId, clean.take(14))
                 }
 
@@ -244,12 +248,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     role = "assistant",
                     content = "",
                     status = MessageStatus.PENDING,
-                    model = currentModel.apiName
+                    model = model.apiName
                 )
                 conversationRepo.insertMessage(assistantMsg)
 
                 // 启动生成
-                startGeneration(convId, userMsg.id, assistantMsg.id)
+                startGeneration(
+                    conversationId = convId,
+                    userMessageId = userMsg.id,
+                    assistantMessageId = assistantMsg.id,
+                    systemPrompt = role.prompt,
+                    model = model
+                )
             } finally {
                 generationMutex.unlock()
             }
@@ -260,18 +270,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun startGeneration(
         conversationId: String,
         userMessageId: String,
-        assistantMessageId: String
+        assistantMessageId: String,
+        systemPrompt: String,
+        model: ModelId
     ) {
         _isStreaming.value = true
-        val conv = conversations.value.find { it.id == conversationId }
-        val model = conv?.model?.let { ModelId.fromApiName(it) } ?: ModelId.MIMO_V2_5
 
         val job = viewModelScope.launch {
             chatRepo.executeGeneration(
                 conversationId = conversationId,
                 assistantMessageId = assistantMessageId,
                 userMessageId = userMessageId,
-                systemPrompt = activeRole.prompt,
+                systemPrompt = systemPrompt,
                 model = model
             ).collect { chunk ->
                 if (chunk is StreamChunk.Error) {
@@ -333,17 +343,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (!generationMutex.tryLock()) return@launch
             try {
                 val msg = conversationRepo.getMessage(messageId) ?: return@launch
+                if (msg.conversationId != convId || msg.role != "assistant") return@launch
+                val conv = conversationRepo.getConversation(convId) ?: return@launch
+                val role = _roles.value.find { it.id == conv.roleId } ?: DEFAULT_ROLES[0]
+                val model = ModelId.fromApiName(conv.model)
 
                 // 找到对应的用户消息
                 val messages = conversationRepo.getMessages(convId)
                 val msgIndex = messages.indexOfFirst { it.id == messageId }
-                val userMsg = if (msgIndex > 0) messages[msgIndex - 1] else null
+                val userMsg = if (msgIndex > 0) messages[msgIndex - 1]
+                    .takeIf { it.role == "user" } else null
+                if (userMsg == null) {
+                    showToast("找不到对应的问题")
+                    return@launch
+                }
 
                 // 重置助手消息
                 conversationRepo.updateMessageContent(messageId, "", MessageStatus.STREAMING)
                 touchConversation(convId)
 
-                startGeneration(convId, userMsg?.id ?: "", messageId)
+                startGeneration(convId, userMsg.id, messageId, role.prompt, model)
             } finally {
                 generationMutex.unlock()
             }
@@ -358,12 +377,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             if (!generationMutex.tryLock()) return@launch
             try {
+                val conv = conversationRepo.getConversation(convId) ?: return@launch
+                val role = _roles.value.find { it.id == conv.roleId } ?: DEFAULT_ROLES[0]
+                val model = ModelId.fromApiName(conv.model)
                 val messages = conversationRepo.getMessages(convId)
                 val targetIndex = messages.indexOfFirst { it.id == messageId }
                 if (targetIndex < 0) return@launch
 
                 // 找到对应的用户消息
-                val userMsg = if (targetIndex > 0) messages[targetIndex - 1] else null
+                val userMsg = if (targetIndex > 0) messages[targetIndex - 1]
+                    .takeIf { it.role == "user" } else null
+                if (userMsg == null) {
+                    showToast("找不到对应的问题")
+                    return@launch
+                }
 
                 // 删除目标助手消息及其之后的所有消息
                 for (i in targetIndex until messages.size) {
@@ -376,12 +403,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     role = "assistant",
                     content = "",
                     status = MessageStatus.PENDING,
-                    model = currentModel.apiName
+                    model = model.apiName
                 )
                 conversationRepo.insertMessage(newAssistant)
                 touchConversation(convId)
 
-                startGeneration(convId, userMsg?.id ?: "", newAssistant.id)
+                startGeneration(convId, userMsg.id, newAssistant.id, role.prompt, model)
             } finally {
                 generationMutex.unlock()
             }
@@ -396,9 +423,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             if (!generationMutex.tryLock()) return@launch
             try {
+                val cleanText = newText.trim()
+                if (cleanText.isBlank()) return@launch
+                val conv = conversationRepo.getConversation(convId) ?: return@launch
+                val role = _roles.value.find { it.id == conv.roleId } ?: DEFAULT_ROLES[0]
+                val model = ModelId.fromApiName(conv.model)
                 val messages = conversationRepo.getMessages(convId)
                 val targetIndex = messages.indexOfFirst { it.id == messageId }
                 if (targetIndex < 0) return@launch
+                if (messages[targetIndex].role != "user") return@launch
 
                 // 删除该消息之后的所有消息
                 for (i in targetIndex + 1 until messages.size) {
@@ -406,7 +439,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 // 更新用户消息内容
-                conversationRepo.updateMessageContent(messageId, newText, MessageStatus.SUCCESS)
+                conversationRepo.updateMessageContent(messageId, cleanText, MessageStatus.SUCCESS)
 
                 // 创建新的助手占位
                 val newAssistant = MessageEntity(
@@ -414,12 +447,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     role = "assistant",
                     content = "",
                     status = MessageStatus.PENDING,
-                    model = currentModel.apiName
+                    model = model.apiName
                 )
                 conversationRepo.insertMessage(newAssistant)
                 touchConversation(convId)
 
-                startGeneration(convId, messageId, newAssistant.id)
+                startGeneration(convId, messageId, newAssistant.id, role.prompt, model)
             } finally {
                 generationMutex.unlock()
             }

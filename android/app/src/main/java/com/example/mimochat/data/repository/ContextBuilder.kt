@@ -61,14 +61,16 @@ class ContextBuilder(
         val turns = buildTurns(validMessages)
 
         // 4. 从最近轮次向前裁剪
-        var usedChars = fullSystemPrompt.length
+        val currentMessage = currentUserMessageId?.let { id ->
+            allMessages.find { it.id == id && it.role == "user" }
+        }
+        var usedChars = fullSystemPrompt.length + (currentMessage?.content?.length ?: 0)
         val selectedTurns = mutableListOf<ConversationTurn>()
 
         for (turn in turns.reversed()) {
+            if (selectedTurns.size >= MAX_HISTORY_ROUNDS) break
             val turnChars = turn.user.content.length + (turn.assistant?.content?.length ?: 0)
-            if (usedChars + turnChars > MAX_CONTEXT_CHARS && selectedTurns.isNotEmpty()) {
-                break
-            }
+            if (usedChars + turnChars > MAX_CONTEXT_CHARS) break
             selectedTurns.add(turn)
             usedChars += turnChars
         }
@@ -83,11 +85,8 @@ class ContextBuilder(
         }
 
         // 6. 追加当前用户消息（如果有）
-        if (currentUserMessageId != null) {
-            val currentMsg = allMessages.find { it.id == currentUserMessageId }
-            if (currentMsg != null && currentMsg.role == "user") {
-                context.add(mapOf("role" to "user", "content" to currentMsg.content))
-            }
+        if (currentMessage != null) {
+            context.add(mapOf("role" to "user", "content" to currentMessage.content))
         }
 
         return context

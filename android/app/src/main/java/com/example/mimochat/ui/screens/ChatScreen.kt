@@ -264,7 +264,7 @@ private fun ChatTopBar(role: Role, model: ModelId, onMenu: () -> Unit, onNew: ()
         Spacer(Modifier.width(8.dp))
         Row(modifier = Modifier.weight(1f).clickable(onClick = onModel), verticalAlignment = Alignment.CenterVertically) {
             Box(modifier = Modifier.size(35.dp).clip(RoundedCornerShape(13.dp)).background(Color(android.graphics.Color.parseColor(role.color))), contentAlignment = Alignment.Center) {
-                Text(role.name.first().toString(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text(role.name.firstOrNull()?.toString() ?: "M", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
             }
             Spacer(Modifier.width(8.dp))
             Column {

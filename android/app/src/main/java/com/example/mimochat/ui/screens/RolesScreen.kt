@@ -79,7 +79,7 @@ fun RolesScreen(
                                     .background(Color(android.graphics.Color.parseColor(r.color))),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(r.name.first().toString(), color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Text(r.name.firstOrNull()?.toString() ?: "?", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             }
                             Spacer(Modifier.width(6.dp))
                             Text(r.name, fontSize = 13.sp, fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal)

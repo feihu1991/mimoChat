@@ -30,6 +30,7 @@ fun ConnectionScreen(
 ) {
     var baseUrl by remember { mutableStateOf(connection.baseUrl) }
     var apiKey by remember { mutableStateOf(connection.apiKey) }
+    var authMode by remember(connection.authMode) { mutableStateOf(connection.authMode) }
     var showKey by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -84,11 +85,26 @@ fun ConnectionScreen(
                 }
             )
 
+            Text("认证方式", style = MaterialTheme.typography.labelLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = authMode == AuthMode.API_KEY,
+                    onClick = { authMode = AuthMode.API_KEY },
+                    label = { Text("api-key") }
+                )
+                FilterChip(
+                    selected = authMode == AuthMode.BEARER,
+                    onClick = { authMode = AuthMode.BEARER },
+                    label = { Text("Bearer") }
+                )
+            }
+
             // Connect button
             Button(
                 onClick = {
-                    val finalUrl = if (baseUrl.startsWith("http")) baseUrl else "https://$baseUrl"
-                    onSave(MimoConnection(baseUrl = finalUrl, apiKey = apiKey))
+                    val normalizedUrl = baseUrl.ifBlank { "https://api.xiaomimimo.com/v1" }
+                    val finalUrl = if (normalizedUrl.startsWith("http")) normalizedUrl else "https://$normalizedUrl"
+                    onSave(MimoConnection(baseUrl = finalUrl, apiKey = apiKey, authMode = authMode))
                     onConnect()
                 },
                 modifier = Modifier.fillMaxWidth(),

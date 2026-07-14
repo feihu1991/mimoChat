@@ -2,9 +2,7 @@ package com.example.mimochat.data.repository
 
 import com.example.mimochat.data.*
 import com.example.mimochat.data.local.ConversationDao
-import com.example.mimochat.data.local.ConversationEntity
 import com.example.mimochat.data.local.MessageDao
-import com.example.mimochat.data.local.MessageEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
@@ -75,7 +73,7 @@ class FakeMsgDao : MessageDao {
     override fun getByConversationFlow(convId: String): Flow<List<MessageEntity>> = flowOf(messages)
     override suspend fun getById(id: String) = messages.find { it.id == id }
     override suspend fun upsert(message: MessageEntity) { inserted.add(message) }
-    override suspend fun upsertAll(msgs: List<MessageEntity>) { inserted.addAll(msgs) }
+    override suspend fun upsertAll(messages: List<MessageEntity>) { inserted.addAll(messages) }
     override suspend fun updateContent(id: String, content: String, status: MessageStatus, updatedAt: Long) {
         updatedContent[id] = content
     }

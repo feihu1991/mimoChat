@@ -96,6 +96,32 @@ class ContextBuilderTest {
         assertEquals("system", ctx[0]["role"])
     }
 
+    @Test
+    fun `history is limited to thirty rounds`() = runTest {
+        fakeMessageDao.messages = (1..35).flatMap { i ->
+            listOf(
+                makeMsg("u$i", "user", "Q$i"),
+                makeMsg("a$i", "assistant", "A$i")
+            )
+        } + makeMsg("current", "user", "当前问题")
+
+        val ctx = contextBuilder.build("conv1", "", "current")
+        assertEquals(31, ctx.count { it["role"] == "user" })
+        assertEquals("当前问题", ctx.last()["content"])
+    }
+
+    @Test
+    fun `current message leaves no room for old history when over budget`() = runTest {
+        fakeMessageDao.messages = listOf(
+            makeMsg("u1", "user", "旧问题"),
+            makeMsg("a1", "assistant", "旧回答"),
+            makeMsg("current", "user", "x".repeat(30_000))
+        )
+
+        val ctx = contextBuilder.build("conv1", "", "current")
+        assertEquals(listOf("user"), ctx.map { it["role"] })
+    }
+
     private fun makeMsg(id: String, role: String, content: String, status: MessageStatus = MessageStatus.SUCCESS) =
         MessageEntity(id = id, conversationId = "conv1", role = role, content = content, status = status)
 }
