@@ -44,6 +44,12 @@ kotlin {
     jvmToolchain(17)
 }
 
+configurations.all {
+    resolutionStrategy {
+        force("org.jetbrains:annotations:24.0.0")
+    }
+}
+
 dependencies {
   val composeBom = platform(libs.androidx.compose.bom)
   implementation(composeBom)
