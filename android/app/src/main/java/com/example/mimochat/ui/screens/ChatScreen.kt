@@ -253,31 +253,42 @@ private fun SmallButton(onClick: () -> Unit, icon: androidx.compose.ui.graphics.
 
 /**
  * Markdown 文本渲染 - 使用 Markwon
+ * 优化：缓存 Markwon 实例，代码块支持横向滚动和语言名显示
  */
 @Composable
 private fun MarkdownText(text: String, modifier: Modifier = Modifier) {
     val textColor = MaterialTheme.colorScheme.onSurface
-    val codeBackground = MaterialTheme.colorScheme.surfaceVariant
-    val codeTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val context = LocalContext.current
+
+    // 缓存 Markwon 实例
+    val markwon = remember {
+        val prism4j = Prism4j(com.example.mimochat.data.remote.MarkdownGrammarLocator())
+        Markwon.builder(context)
+            .usePlugin(StrikethroughPlugin.create())
+            .usePlugin(SyntaxHighlightPlugin.create(prism4j, Prism4jThemeDarkula.create()))
+            .build()
+    }
 
     AndroidView(
-        factory = { context ->
-            val prism4j = Prism4j(com.example.mimochat.data.remote.MarkdownGrammarLocator())
-            val markwon = Markwon.builder(context)
-                .usePlugin(StrikethroughPlugin.create())
-                .usePlugin(SyntaxHighlightPlugin.create(prism4j, Prism4jThemeDarkula.create()))
-                .build()
-            TextView(context).apply {
-                setTextColor(textColor.toArgb())
-                textSize = 14f
+        factory = { ctx ->
+            android.widget.ScrollView(ctx).apply {
+                isHorizontalScrollBarEnabled = true
+                val tv = TextView(ctx).apply {
+                    setTextColor(textColor.toArgb())
+                    textSize = 14f
+                    // 代码块横向滚动
+                    setHorizontallyScrolling(true)
+                }
+                addView(tv, android.widget.ScrollView.LayoutParams(
+                    android.widget.ScrollView.LayoutParams.MATCH_PARENT,
+                    android.widget.ScrollView.LayoutParams.WRAP_CONTENT
+                ))
             }
         },
-        update = { textView ->
-            val markwon = Markwon.builder(textView.context)
-                .usePlugin(StrikethroughPlugin.create())
-                .build()
-            markwon.setMarkdown(textView, text)
-            textView.setTextColor(textColor.toArgb())
+        update = { scrollView ->
+            val tv = scrollView.getChildAt(0) as TextView
+            markwon.setMarkdown(tv, text)
+            tv.setTextColor(textColor.toArgb())
         },
         modifier = modifier
     )
