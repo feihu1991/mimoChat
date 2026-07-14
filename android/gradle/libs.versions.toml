@@ -52,7 +52,7 @@ room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 security-crypto = { module = "androidx.security:security-crypto", version.ref = "securityCrypto" }
 markwon-core = { module = "io.noties.markwon:core", version.ref = "markwon" }
 markwon-ext-strikethrough = { module = "io.noties.markwon:ext-strikethrough", version.ref = "markwon" }
-markwon-syntaxhighlight = { module = "io.noties.markwon:syntaxhighlight", version.ref = "markwon" }
+markwon-syntaxhighlight = { module = "io.noties.markwon:syntax-highlight", version.ref = "markwon" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }
