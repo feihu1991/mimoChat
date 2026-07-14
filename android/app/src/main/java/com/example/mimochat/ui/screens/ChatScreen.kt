@@ -22,6 +22,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.mimochat.data.*
 import com.example.mimochat.theme.*
+import com.example.mimochat.ui.util.isNearBottomForAutoScroll
+import com.example.mimochat.ui.util.shouldShowScrollToBottomButton
 import kotlinx.coroutines.launch
 
 @Composable
@@ -46,12 +48,28 @@ fun ChatScreen(
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    var showScrollButton by remember { mutableStateOf(false) }
 
-    LaunchedEffect(messages.size, messages.lastOrNull()?.text?.length) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(0)
+    // 是否在底部附近（reverseLayout 下 index 0=最新消息）
+    var isNearBottom by remember { mutableStateOf(true) }
+
+    // 监听滚动位置变化，实时更新 isNearBottom
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .collect { index ->
+                isNearBottom = isNearBottomForAutoScroll(index)
+            }
     }
-    showScrollButton = listState.firstVisibleItemIndex > 3
+
+    // 仅在用户处于底部附近时自动跟随新内容
+    LaunchedEffect(messages.size, messages.lastOrNull()?.text?.length) {
+        if (isNearBottom && messages.isNotEmpty()) {
+            listState.scrollToItem(0) // 瞬移，不用动画，避免流式更新时反复执行昂贵的滚动动画
+        }
+    }
+
+    val showScrollButton by remember {
+        derivedStateOf { shouldShowScrollToBottomButton(listState.firstVisibleItemIndex) }
+    }
 
     Column(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         ChatTopBar(role = role, model = model, onMenu = onMenu, onNew = onNew, onModel = onModel)
