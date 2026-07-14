@@ -22,8 +22,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.mimochat.data.*
 import com.example.mimochat.theme.*
-import com.example.mimochat.ui.util.isNearBottomForAutoScroll
-import com.example.mimochat.ui.util.shouldShowScrollToBottomButton
 import kotlinx.coroutines.launch
 
 @Composable
@@ -48,27 +46,36 @@ fun ChatScreen(
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val scrollPolicy = remember { ChatScrollPolicy() }
 
-    // 是否在底部附近（reverseLayout 下 index 0=最新消息）
-    var isNearBottom by remember { mutableStateOf(true) }
+    // Track previous message count to detect new user messages
+    var previousMessageCount by remember { mutableIntStateOf(0) }
 
-    // 监听滚动位置变化，实时更新 isNearBottom
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.firstVisibleItemIndex }
-            .collect { index ->
-                isNearBottom = isNearBottomForAutoScroll(index)
+    // Detect new user messages and enable auto-scroll
+    LaunchedEffect(messages.size) {
+        if (messages.size > previousMessageCount && messages.isNotEmpty()) {
+            if (messages.last().role == MessageRole.USER) {
+                scrollPolicy.onNewUserMessage()
             }
+        }
+        previousMessageCount = messages.size
     }
 
-    // 仅在用户处于底部附近时自动跟随新内容
-    LaunchedEffect(messages.size, messages.lastOrNull()?.text?.length) {
-        if (isNearBottom && messages.isNotEmpty()) {
-            listState.scrollToItem(0) // 瞬移，不用动画，避免流式更新时反复执行昂贵的滚动动画
+    // Track scroll position and auto-follow during streaming
+    LaunchedEffect(listState, isStreaming) {
+        snapshotFlow {
+            listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+        }.collect { (index, offset) ->
+            scrollPolicy.onScrollPositionChanged(index, offset)
+            // Auto-follow: only when enabled and content is streaming
+            if (isStreaming && scrollPolicy.shouldAutoScroll() && messages.isNotEmpty()) {
+                listState.scrollToItem(0)
+            }
         }
     }
 
     val showScrollButton by remember {
-        derivedStateOf { shouldShowScrollToBottomButton(listState.firstVisibleItemIndex) }
+        derivedStateOf { scrollPolicy.shouldShowScrollButton(listState.firstVisibleItemIndex) }
     }
 
     Column(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
@@ -96,7 +103,10 @@ fun ChatScreen(
 
             if (showScrollButton) {
                 FloatingActionButton(
-                    onClick = { scope.launch { listState.animateScrollToItem(0) } },
+                    onClick = {
+                        scrollPolicy.onScrollToBottomClicked()
+                        scope.launch { listState.animateScrollToItem(0) }
+                    },
                     modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).size(40.dp),
                     containerColor = MaterialTheme.colorScheme.surface,
                     contentColor = MaterialTheme.colorScheme.onSurface
