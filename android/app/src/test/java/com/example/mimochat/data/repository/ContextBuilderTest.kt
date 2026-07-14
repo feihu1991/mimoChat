@@ -2,9 +2,7 @@ package com.example.mimochat.data.repository
 
 import com.example.mimochat.data.*
 import com.example.mimochat.data.local.MemoryDao
-import com.example.mimochat.data.local.MemoryEntity
 import com.example.mimochat.data.local.MessageDao
-import com.example.mimochat.data.local.MessageEntity
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
