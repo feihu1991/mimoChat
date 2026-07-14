@@ -109,5 +109,4 @@ dependencies {
   implementation(libs.security.crypto)
 
   // Markdown rendering
-  implementation(libs.markwon.core)
 }

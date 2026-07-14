@@ -1,6 +1,5 @@
 package com.example.mimochat.ui.screens
 
-import android.widget.TextView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -18,14 +17,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import com.example.mimochat.data.*
 import com.example.mimochat.theme.*
-import io.noties.markwon.Markwon
 import kotlinx.coroutines.launch
 
 @Composable
@@ -248,32 +244,16 @@ private fun SmallButton(onClick: () -> Unit, icon: androidx.compose.ui.graphics.
 }
 
 /**
- * Markdown 文本渲染 - 使用 Markwon
- * 优化：缓存 Markwon 实例
+ * Markdown 文本渲染 - 纯文本版本
  */
 @Composable
 private fun MarkdownText(text: String, modifier: Modifier = Modifier) {
-    val textColor = MaterialTheme.colorScheme.onSurface
-    val context = LocalContext.current
-
-    // 缓存 Markwon 实例
-    val markwon = remember {
-        Markwon.builder(context)
-            .build()
-    }
-
-    AndroidView(
-        factory = { ctx ->
-            TextView(ctx).apply {
-                setTextColor(textColor.toArgb())
-                textSize = 14f
-            }
-        },
-        update = { tv ->
-            markwon.setMarkdown(tv, text)
-            tv.setTextColor(textColor.toArgb())
-        },
-        modifier = modifier
+    Text(
+        text = text,
+        modifier = modifier,
+        fontSize = 14.sp,
+        lineHeight = 22.sp,
+        color = MaterialTheme.colorScheme.onSurface
     )
 }
 
