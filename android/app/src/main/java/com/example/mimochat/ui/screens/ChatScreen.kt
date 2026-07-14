@@ -27,9 +27,6 @@ import com.example.mimochat.data.*
 import com.example.mimochat.theme.*
 import io.noties.markwon.Markwon
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
-import io.noties.markwon.syntax.Prism4jThemeDarkula
-import io.noties.markwon.syntax.SyntaxHighlightPlugin
-import io.noties.prism4j.Prism4j
 import kotlinx.coroutines.launch
 
 @Composable
@@ -262,10 +259,8 @@ private fun MarkdownText(text: String, modifier: Modifier = Modifier) {
 
     // 缓存 Markwon 实例
     val markwon = remember {
-        val prism4j = Prism4j(com.example.mimochat.data.remote.MarkdownGrammarLocator())
         Markwon.builder(context)
             .usePlugin(StrikethroughPlugin.create())
-            .usePlugin(SyntaxHighlightPlugin.create(prism4j, Prism4jThemeDarkula.create()))
             .build()
     }
 
