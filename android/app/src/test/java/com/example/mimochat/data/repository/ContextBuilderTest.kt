@@ -10,7 +10,6 @@ import org.junit.Before
 import org.junit.Test
 
 class ContextBuilderTest {
-
     private lateinit var fakeMessageDao: FakeMessageDao
     private lateinit var fakeMemoryDao: FakeMemoryDao
     private lateinit var contextBuilder: ContextBuilder
@@ -41,8 +40,7 @@ class ContextBuilderTest {
             makeMsg("a2", "assistant", "A2")
         )
         val ctx = contextBuilder.build("conv1", "")
-        val roles = ctx.map { it["role"] }
-        assertEquals(listOf("user", "assistant", "user", "assistant"), roles)
+        assertEquals(listOf("user", "assistant", "user", "assistant"), ctx.map { it["role"] })
     }
 
     @Test
@@ -53,9 +51,8 @@ class ContextBuilderTest {
             makeMsg("u2", "user", "当前问题")
         )
         val ctx = contextBuilder.build("conv1", "", "u2")
-        val last = ctx.last()
-        assertEquals("user", last["role"])
-        assertEquals("当前问题", last["content"])
+        assertEquals("user", ctx.last()["role"])
+        assertEquals("当前问题", ctx.last()["content"])
     }
 
     @Test
@@ -65,8 +62,7 @@ class ContextBuilderTest {
             makeMsg("a1", "assistant", "A", MessageStatus.FAILED)
         )
         val ctx = contextBuilder.build("conv1", "")
-        val assistants = ctx.filter { it["role"] == "assistant" }
-        assertTrue(assistants.isEmpty())
+        assertTrue(ctx.none { it["role"] == "assistant" })
     }
 
     @Test
@@ -76,16 +72,14 @@ class ContextBuilderTest {
             makeMsg("a1", "assistant", "生成中...", MessageStatus.STREAMING)
         )
         val ctx = contextBuilder.build("conv1", "")
-        val assistants = ctx.filter { it["role"] == "assistant" }
-        assertTrue(assistants.isEmpty())
+        assertTrue(ctx.none { it["role"] == "assistant" })
     }
 
     @Test
     fun `incomplete turn preserved as user only`() = runTest {
         fakeMessageDao.messages = listOf(makeMsg("u1", "user", "Q"))
         val ctx = contextBuilder.build("conv1", "")
-        val users = ctx.filter { it["role"] == "user" }
-        assertEquals(1, users.size)
+        assertEquals(1, ctx.count { it["role"] == "user" })
     }
 
     @Test
@@ -111,19 +105,37 @@ class ContextBuilderTest {
     }
 
     @Test
-    fun `current message leaves no room for old history when over budget`() = runTest {
+    fun `current message consumes budget before history`() = runTest {
         fakeMessageDao.messages = listOf(
             makeMsg("u1", "user", "旧问题"),
             makeMsg("a1", "assistant", "旧回答"),
             makeMsg("current", "user", "x".repeat(30_000))
         )
 
-        val ctx = contextBuilder.build("conv1", "", "current")
+        val ctx = contextBuilder.build("conv1", "系统提示", "current")
         assertEquals(listOf("user"), ctx.map { it["role"] })
+        assertEquals(ContextBuilder.MAX_CONTEXT_CHARS, (ctx.single()["content"] as String).length)
     }
 
-    private fun makeMsg(id: String, role: String, content: String, status: MessageStatus = MessageStatus.SUCCESS) =
-        MessageEntity(id = id, conversationId = "conv1", role = role, content = content, status = status)
+    @Test
+    fun `total context never exceeds hard limit`() = runTest {
+        fakeMessageDao.messages = listOf(
+            makeMsg("u1", "user", "q".repeat(8_000)),
+            makeMsg("a1", "assistant", "a".repeat(8_000)),
+            makeMsg("current", "user", "c".repeat(20_000))
+        )
+        val ctx = contextBuilder.build("conv1", "s".repeat(5_000), "current")
+        val total = ctx.sumOf { (it["content"] as String).length }
+        assertTrue(total <= ContextBuilder.MAX_CONTEXT_CHARS)
+        assertEquals("current", fakeMessageDao.messages.last().id)
+    }
+
+    private fun makeMsg(
+        id: String,
+        role: String,
+        content: String,
+        status: MessageStatus = MessageStatus.SUCCESS
+    ) = MessageEntity(id = id, conversationId = "conv1", role = role, content = content, status = status)
 }
 
 class FakeMessageDao : MessageDao {
