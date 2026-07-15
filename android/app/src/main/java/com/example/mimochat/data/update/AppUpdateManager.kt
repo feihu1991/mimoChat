@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
+import androidx.core.content.ContextCompat
 import com.example.mimochat.BuildConfig
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -172,13 +173,12 @@ class AppUpdateManager(context: Context) : AutoCloseable {
         }
         downloadReceiver = receiver
 
-        val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            appContext.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
-        } else {
-            @Suppress("DEPRECATION")
-            appContext.registerReceiver(receiver, filter)
-        }
+        ContextCompat.registerReceiver(
+            appContext,
+            receiver,
+            IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
+            ContextCompat.RECEIVER_EXPORTED
+        )
     }
 
     private fun handleDownloadComplete(
