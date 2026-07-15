@@ -91,7 +91,28 @@ jobs:
           printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > android/mimochat-release.jks
           chmod 600 android/mimochat-release.jks
 
-      - name: Build and verify release
+      - name: Verify keystore credentials
+        env:
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          keytool -list \
+            -keystore android/mimochat-release.jks \
+            -storepass "$RELEASE_STORE_PASSWORD" \
+            -alias "$RELEASE_KEY_ALIAS" >/dev/null
+          mkdir -p release-logs /tmp/mimochat-sign-check
+          jar --create --file /tmp/mimochat-sign-check.jar -C /tmp/mimochat-sign-check .
+          jarsigner \
+            -keystore android/mimochat-release.jks \
+            -storepass "$RELEASE_STORE_PASSWORD" \
+            -keypass "$RELEASE_KEY_PASSWORD" \
+            /tmp/mimochat-sign-check.jar \
+            "$RELEASE_KEY_ALIAS" >/dev/null
+
+      - name: Build signed release APK
         working-directory: android
         env:
           MIMO_VERSION_NAME: ${{ env.VERSION_NAME }}
@@ -100,7 +121,49 @@ jobs:
           RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
-        run: ./gradlew clean assembleRelease testDebugUnitTest lintRelease --no-daemon --stacktrace
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ../release-logs
+          ./gradlew clean assembleRelease --no-daemon --stacktrace 2>&1 | tee ../release-logs/assembleRelease.log
+
+      - name: Run unit tests
+        working-directory: android
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew testDebugUnitTest --no-daemon --stacktrace 2>&1 | tee ../release-logs/testDebugUnitTest.log
+
+      - name: Run release lint
+        working-directory: android
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew lintRelease --no-daemon --stacktrace 2>&1 | tee ../release-logs/lintRelease.log
+
+      - name: Verify APK signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::apksigner not found"
+            exit 1
+          fi
+          "$APKSIGNER" verify --verbose --print-certs android/app/build/outputs/apk/release/app-release.apk \
+            2>&1 | tee release-logs/apksigner.log
+
+      - name: Upload release diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            release-logs/
+            android/app/build/reports/lint-results-release.html
+            android/app/build/reports/tests/
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Prepare release files
         shell: bash
@@ -131,4 +194,4 @@ jobs:
 
       - name: Remove decoded keystore
         if: always()
-        run: rm -f android/mimochat-release.jks
+        run: rm -f android/mimochat-release.jks /tmp/mimochat-sign-check.jar
