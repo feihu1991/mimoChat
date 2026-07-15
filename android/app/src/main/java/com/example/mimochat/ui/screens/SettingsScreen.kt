@@ -13,11 +13,16 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.example.mimochat.BuildConfig
 import com.example.mimochat.data.*
+import com.example.mimochat.data.update.AppUpdateManager
+import com.example.mimochat.data.update.AppUpdateState
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -34,9 +39,37 @@ fun SettingsScreen(
     modifier: Modifier = Modifier
 ) {
     var showApiKeyDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val updateManager = remember(context) { AppUpdateManager(context.applicationContext) }
+    val updateScope = rememberCoroutineScope()
+    var updateState by remember { mutableStateOf<AppUpdateState>(AppUpdateState.Idle) }
+
+    DisposableEffect(updateManager) {
+        onDispose { updateManager.close() }
+    }
+
+    fun checkForUpdate() {
+        if (updateState is AppUpdateState.Checking || updateState is AppUpdateState.Downloading) return
+        updateScope.launch {
+            updateState = AppUpdateState.Checking
+            updateState = updateManager.checkForUpdate(BuildConfig.VERSION_NAME)
+        }
+    }
+
+    fun handleUpdateClick() {
+        when (val state = updateState) {
+            is AppUpdateState.Available -> {
+                updateManager.downloadAndInstall(state.release) { newState ->
+                    updateState = newState
+                }
+            }
+            is AppUpdateState.Downloading,
+            is AppUpdateState.Checking -> Unit
+            else -> checkForUpdate()
+        }
+    }
 
     Column(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        // Header
         TopAppBar(
             title = { Text("设置", fontWeight = FontWeight.Bold) },
             navigationIcon = {
@@ -52,7 +85,6 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)
         ) {
-            // Private mode note
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
@@ -73,7 +105,6 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(20.dp))
 
-            // Chat section
             SectionHeader("聊天")
             SettingsCard {
                 SettingsRow(
@@ -92,7 +123,6 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            // API Key section
             SectionHeader("安全")
             SettingsCard {
                 SettingsRow(
@@ -105,7 +135,6 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            // Theme section
             SectionHeader("外观")
             SettingsCard {
                 Row(
@@ -125,7 +154,6 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            // About
             SectionHeader("关于")
             SettingsCard {
                 Row(
@@ -134,8 +162,31 @@ fun SettingsScreen(
                 ) {
                     Column {
                         Text("MiMo Chat", fontWeight = FontWeight.Medium)
-                        Text("本地私人版本 · 1.0.0", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            "本地私人版本 · ${BuildConfig.VERSION_NAME}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
+                }
+                HorizontalDivider()
+                SettingsRow(
+                    icon = Icons.Default.Download,
+                    title = "软件更新",
+                    detail = updateDetail(updateState),
+                    onClick = ::handleUpdateClick
+                )
+                if (updateState is AppUpdateState.Checking || updateState is AppUpdateState.Downloading) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+                val available = updateState as? AppUpdateState.Available
+                if (available != null && available.release.releaseNotes.isNotBlank()) {
+                    Text(
+                        text = available.release.releaseNotes.take(400),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 16.dp)
+                    )
                 }
             }
 
@@ -143,7 +194,6 @@ fun SettingsScreen(
         }
     }
 
-    // API Key Dialog
     if (showApiKeyDialog) {
         var keyInput by remember { mutableStateOf(connection.apiKey) }
         var showKey by remember { mutableStateOf(false) }
@@ -211,6 +261,16 @@ fun SettingsScreen(
             }
         )
     }
+}
+
+private fun updateDetail(state: AppUpdateState): String = when (state) {
+    AppUpdateState.Idle -> "当前版本 ${BuildConfig.VERSION_NAME} · 点击检查"
+    AppUpdateState.Checking -> "正在检查 GitHub Releases…"
+    is AppUpdateState.UpToDate -> "已是最新版本 ${state.currentVersion}"
+    is AppUpdateState.Available -> "发现 ${state.release.tagName} · 点击下载并安装"
+    is AppUpdateState.Downloading -> "正在下载 ${state.release.tagName}…"
+    is AppUpdateState.Installing -> "已打开 ${state.release.tagName} 安装程序"
+    is AppUpdateState.Error -> state.message
 }
 
 @Composable
