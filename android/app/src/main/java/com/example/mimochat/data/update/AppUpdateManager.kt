@@ -24,6 +24,9 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -51,7 +54,17 @@ sealed interface AppUpdateState {
     data class Error(val message: String) : AppUpdateState
 }
 
-class AppUpdateManager(context: Context) : AutoCloseable {
+class AppUpdateManager private constructor(context: Context) {
+    companion object {
+        @Volatile
+        private var instance: AppUpdateManager? = null
+
+        fun getInstance(context: Context): AppUpdateManager =
+            instance ?: synchronized(this) {
+                instance ?: AppUpdateManager(context.applicationContext).also { instance = it }
+            }
+    }
+
     private val appContext = context.applicationContext
     private val downloadManager = appContext.getSystemService(DownloadManager::class.java)
     private val client = HttpClient(OkHttp) {
@@ -65,10 +78,22 @@ class AppUpdateManager(context: Context) : AutoCloseable {
         }
     }
 
+    private val _state = MutableStateFlow<AppUpdateState>(AppUpdateState.Idle)
+    val state: StateFlow<AppUpdateState> = _state.asStateFlow()
+
     private var downloadReceiver: BroadcastReceiver? = null
     private var activeDownloadId: Long? = null
 
-    suspend fun checkForUpdate(currentVersion: String): AppUpdateState {
+    suspend fun checkForUpdate(currentVersion: String) {
+        if (_state.value is AppUpdateState.Checking ||
+            _state.value is AppUpdateState.Downloading
+        ) return
+
+        _state.value = AppUpdateState.Checking
+        _state.value = fetchUpdateState(currentVersion)
+    }
+
+    private suspend fun fetchUpdateState(currentVersion: String): AppUpdateState {
         return try {
             val response = client.get(LATEST_RELEASE_URL) {
                 header(HttpHeaders.Accept, "application/vnd.github+json")
@@ -113,12 +138,11 @@ class AppUpdateManager(context: Context) : AutoCloseable {
         }
     }
 
-    fun downloadAndInstall(
-        release: AppRelease,
-        onState: (AppUpdateState) -> Unit
-    ) {
+    fun downloadAndInstall() {
+        val release = (_state.value as? AppUpdateState.Available)?.release ?: return
+
         if (!isTrustedApkUrl(release.apkDownloadUrl)) {
-            onState(AppUpdateState.Error("Release APK 下载地址不可信"))
+            _state.value = AppUpdateState.Error("Release APK 下载地址不可信")
             return
         }
 
@@ -131,9 +155,9 @@ class AppUpdateManager(context: Context) : AutoCloseable {
                     Uri.parse("package:${appContext.packageName}")
                 ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 appContext.startActivity(settingsIntent)
-                onState(AppUpdateState.Error("请允许 MiMo Chat 安装未知应用，然后返回重试"))
+                _state.value = AppUpdateState.Error("请允许 MiMo Chat 安装未知应用，然后返回重试")
             } catch (_: ActivityNotFoundException) {
-                onState(AppUpdateState.Error("无法打开安装权限设置"))
+                _state.value = AppUpdateState.Error("无法打开安装权限设置")
             }
             return
         }
@@ -156,19 +180,19 @@ class AppUpdateManager(context: Context) : AutoCloseable {
         val downloadId = try {
             downloadManager.enqueue(request)
         } catch (e: Exception) {
-            onState(AppUpdateState.Error(e.message ?: "无法开始下载"))
+            _state.value = AppUpdateState.Error(e.message ?: "无法开始下载")
             return
         }
 
         activeDownloadId = downloadId
-        onState(AppUpdateState.Downloading(release))
+        _state.value = AppUpdateState.Downloading(release)
 
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 if (intent?.action != DownloadManager.ACTION_DOWNLOAD_COMPLETE) return
                 val completedId = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
                 if (completedId != activeDownloadId) return
-                handleDownloadComplete(completedId, release, onState)
+                handleDownloadComplete(completedId, release)
             }
         }
         downloadReceiver = receiver
@@ -181,11 +205,7 @@ class AppUpdateManager(context: Context) : AutoCloseable {
         )
     }
 
-    private fun handleDownloadComplete(
-        downloadId: Long,
-        release: AppRelease,
-        onState: (AppUpdateState) -> Unit
-    ) {
+    private fun handleDownloadComplete(downloadId: Long, release: AppRelease) {
         val cursor = downloadManager.query(
             DownloadManager.Query().setFilterById(downloadId)
         )
@@ -193,7 +213,7 @@ class AppUpdateManager(context: Context) : AutoCloseable {
         cursor.use {
             if (!it.moveToFirst()) {
                 clearDownloadReceiver()
-                onState(AppUpdateState.Error("无法读取下载结果"))
+                _state.value = AppUpdateState.Error("无法读取下载结果")
                 return
             }
 
@@ -201,7 +221,7 @@ class AppUpdateManager(context: Context) : AutoCloseable {
             if (status != DownloadManager.STATUS_SUCCESSFUL) {
                 val reason = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
                 clearDownloadReceiver()
-                onState(AppUpdateState.Error("APK 下载失败，错误码 $reason"))
+                _state.value = AppUpdateState.Error("APK 下载失败，错误码 $reason")
                 return
             }
         }
@@ -209,7 +229,7 @@ class AppUpdateManager(context: Context) : AutoCloseable {
         val apkUri = downloadManager.getUriForDownloadedFile(downloadId)
         if (apkUri == null) {
             clearDownloadReceiver()
-            onState(AppUpdateState.Error("找不到已下载的 APK"))
+            _state.value = AppUpdateState.Error("找不到已下载的 APK")
             return
         }
 
@@ -220,10 +240,10 @@ class AppUpdateManager(context: Context) : AutoCloseable {
 
         try {
             clearDownloadReceiver()
-            onState(AppUpdateState.Installing(release))
+            _state.value = AppUpdateState.Installing(release)
             appContext.startActivity(installIntent)
         } catch (_: ActivityNotFoundException) {
-            onState(AppUpdateState.Error("系统中没有可用的 APK 安装器"))
+            _state.value = AppUpdateState.Error("系统中没有可用的 APK 安装器")
         }
     }
 
@@ -239,11 +259,6 @@ class AppUpdateManager(context: Context) : AutoCloseable {
         }
         downloadReceiver = null
         activeDownloadId = null
-    }
-
-    override fun close() {
-        clearDownloadReceiver()
-        client.close()
     }
 }
 
