@@ -1,0 +1,134 @@
+name: Android Release
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'android/**'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: 'Release version, for example 1.2.0. Leave empty for automatic build version.'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-master
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build signed APK and publish GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x android/gradlew
+
+      - name: Determine release version
+        env:
+          INPUT_VERSION_NAME: ${{ inputs.version_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_VERSION=$(grep 'val mimoVersionName' android/app/build.gradle.kts | sed -E 's/.*\?: "([^"]+)".*/\1/')
+          if [ -n "${INPUT_VERSION_NAME:-}" ]; then
+            VERSION_NAME="$INPUT_VERSION_NAME"
+          else
+            VERSION_PREFIX=$(echo "$SOURCE_VERSION" | awk -F. '{print $1"."$2}')
+            VERSION_NAME="${VERSION_PREFIX}.${GITHUB_RUN_NUMBER}"
+          fi
+
+          if ! echo "$VERSION_NAME" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Version must use numeric semantic version format, for example 1.2.0"
+            exit 1
+          fi
+
+          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          echo "TAG_NAME=v$VERSION_NAME" >> "$GITHUB_ENV"
+          echo "APK_NAME=mimoChat-$VERSION_NAME.apk" >> "$GITHUB_ENV"
+
+      - name: Validate signing secrets
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in RELEASE_KEYSTORE_BASE64 RELEASE_STORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing repository secret: $name. See RELEASE.md."
+              exit 1
+            fi
+          done
+
+      - name: Decode release keystore
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > android/mimochat-release.jks
+          chmod 600 android/mimochat-release.jks
+
+      - name: Build and verify release
+        working-directory: android
+        env:
+          MIMO_VERSION_NAME: ${{ env.VERSION_NAME }}
+          MIMO_VERSION_CODE: ${{ env.VERSION_CODE }}
+          RELEASE_STORE_FILE: ${{ github.workspace }}/android/mimochat-release.jks
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: ./gradlew clean assembleRelease testDebugUnitTest lintRelease --no-daemon --stacktrace
+
+      - name: Prepare release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp android/app/build/outputs/apk/release/app-release.apk "dist/$APK_NAME"
+          sha256sum "dist/$APK_NAME" > "dist/$APK_NAME.sha256"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" "dist/$APK_NAME" "dist/$APK_NAME.sha256" --clobber
+            gh release edit "$TAG_NAME" --title "MiMo Chat $VERSION_NAME" --latest
+          else
+            gh release create "$TAG_NAME" \
+              "dist/$APK_NAME" \
+              "dist/$APK_NAME.sha256" \
+              --title "MiMo Chat $VERSION_NAME" \
+              --target "$GITHUB_SHA" \
+              --generate-notes \
+              --latest
+          fi
+
+      - name: Remove decoded keystore
+        if: always()
+        run: rm -f android/mimochat-release.jks
