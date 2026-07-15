@@ -5,6 +5,19 @@ plugins {
   alias(libs.plugins.ksp)
 }
 
+val mimoVersionCode = providers.environmentVariable("MIMO_VERSION_CODE").orNull?.toIntOrNull() ?: 2
+val mimoVersionName = providers.environmentVariable("MIMO_VERSION_NAME").orNull ?: "1.1.0"
+val releaseStoreFilePath = providers.environmentVariable("RELEASE_STORE_FILE").orNull
+val releaseStorePassword = providers.environmentVariable("RELEASE_STORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("RELEASE_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("RELEASE_KEY_PASSWORD").orNull
+val hasReleaseSigning = listOf(
+    releaseStoreFilePath,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "com.example.mimochat"
     compileSdk = 36
@@ -12,13 +25,27 @@ android {
         applicationId = "com.example.mimochat"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = mimoVersionCode
+        versionName = mimoVersionName
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(requireNotNull(releaseStoreFilePath))
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
@@ -28,8 +55,8 @@ android {
     }
     buildFeatures {
       compose = true
+      buildConfig = true
       aidl = false
-      buildConfig = false
       shaders = false
     }
 
