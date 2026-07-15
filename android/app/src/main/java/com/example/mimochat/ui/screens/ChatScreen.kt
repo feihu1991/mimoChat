@@ -46,12 +46,68 @@ fun ChatScreen(
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    var showScrollButton by remember { mutableStateOf(false) }
+    val scrollPolicy = remember { ChatScrollPolicy() }
+    var isProgrammaticScroll by remember { mutableStateOf(false) }
 
-    LaunchedEffect(messages.size, messages.lastOrNull()?.text?.length) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(0)
+    suspend fun scrollToBottom(animated: Boolean) {
+        if (messages.isEmpty()) return
+        isProgrammaticScroll = true
+        try {
+            if (animated) listState.animateScrollToItem(0)
+            else listState.scrollToItem(0)
+        } finally {
+            isProgrammaticScroll = false
+        }
     }
-    showScrollButton = listState.firstVisibleItemIndex > 3
+
+    // 只把用户主动滚动视为“离开底部”，避免流式内容增长误关自动跟随。
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            Triple(
+                listState.firstVisibleItemIndex,
+                listState.firstVisibleItemScrollOffset,
+                listState.isScrollInProgress
+            )
+        }.collect { (index, offset, scrolling) ->
+            if (scrolling && !isProgrammaticScroll) {
+                scrollPolicy.onUserScrollPositionChanged(index, offset)
+            }
+        }
+    }
+
+    val latestUserMessageId = messages.lastOrNull { it.role == MessageRole.USER }?.id
+    var previousUserMessageId by remember { mutableStateOf(latestUserMessageId) }
+
+    // 从历史位置发送新消息时，立即回到底部并恢复流式跟随。
+    LaunchedEffect(latestUserMessageId) {
+        if (latestUserMessageId != null && latestUserMessageId != previousUserMessageId) {
+            scrollPolicy.onNewUserMessage()
+            scrollToBottom(animated = false)
+        }
+        previousUserMessageId = latestUserMessageId
+    }
+
+    // 流式文本变化时，仅在用户没有离开底部的情况下跟随。
+    val latestMessage = messages.lastOrNull()
+    LaunchedEffect(
+        latestMessage?.id,
+        latestMessage?.text?.length,
+        latestMessage?.status,
+        isStreaming
+    ) {
+        if (isStreaming && scrollPolicy.shouldAutoScroll()) {
+            scrollToBottom(animated = false)
+        }
+    }
+
+    val showScrollButton by remember {
+        derivedStateOf {
+            scrollPolicy.shouldShowScrollButton(
+                listState.firstVisibleItemIndex,
+                listState.firstVisibleItemScrollOffset
+            )
+        }
+    }
 
     Column(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         ChatTopBar(role = role, model = model, onMenu = onMenu, onNew = onNew, onModel = onModel)
@@ -78,7 +134,10 @@ fun ChatScreen(
 
             if (showScrollButton) {
                 FloatingActionButton(
-                    onClick = { scope.launch { listState.animateScrollToItem(0) } },
+                    onClick = {
+                        scrollPolicy.onScrollToBottomClicked()
+                        scope.launch { scrollToBottom(animated = true) }
+                    },
                     modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).size(40.dp),
                     containerColor = MaterialTheme.colorScheme.surface,
                     contentColor = MaterialTheme.colorScheme.onSurface
@@ -137,7 +196,6 @@ private fun MessageBubble(
                     isFailed -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
                     else -> Color.Transparent
                 },
-                // 修复：所有消息都可以点击打开菜单
                 modifier = Modifier.clickable { showMenu = !showMenu }
             ) {
                 if (isEditing) {
@@ -166,7 +224,6 @@ private fun MessageBubble(
                                 color = UserMessageText
                             )
                         } else {
-                            // 助手消息使用 Markdown 渲染
                             MarkdownText(
                                 text = when {
                                     message.text.isEmpty() && isStreamingMsg -> "正在思考…"
@@ -176,8 +233,7 @@ private fun MessageBubble(
                                 },
                                 modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp)
                             )
-                            // 代码块复制按钮 - 当消息包含代码块时显示
-                            if (!isUser && message.text.contains("```") && message.text.isNotBlank()) {
+                            if (message.text.contains("```") && message.text.isNotBlank()) {
                                 TextButton(
                                     onClick = { onCopy() },
                                     modifier = Modifier.padding(start = 8.dp, bottom = 4.dp),
@@ -194,7 +250,6 @@ private fun MessageBubble(
             }
         }
 
-        // 流式进度
         if (isStreamingMsg && message.text.isNotEmpty()) {
             LinearProgressIndicator(
                 modifier = Modifier.width(40.dp).height(2.dp).padding(top = 2.dp),
@@ -202,19 +257,24 @@ private fun MessageBubble(
             )
         }
 
-        // 错误信息
         if (isFailed && message.errorMessage != null) {
-            Text(message.errorMessage, style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 2.dp, start = 4.dp))
+            Text(
+                message.errorMessage,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 2.dp, start = 4.dp)
+            )
         }
 
-        // 停止标识
         if (isStopped && message.text.isNotBlank()) {
-            Text("已停止生成", style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp, start = 4.dp))
+            Text(
+                "已停止生成",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 2.dp, start = 4.dp)
+            )
         }
 
-        // 操作菜单
         if (showMenu && !isStreamingMsg && !isPending) {
             Row(modifier = Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (isUser) {
@@ -243,9 +303,6 @@ private fun SmallButton(onClick: () -> Unit, icon: androidx.compose.ui.graphics.
     }
 }
 
-/**
- * Markdown 文本渲染 - 纯文本版本
- */
 @Composable
 private fun MarkdownText(text: String, modifier: Modifier = Modifier) {
     Text(

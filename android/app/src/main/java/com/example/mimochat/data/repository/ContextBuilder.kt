@@ -5,13 +5,13 @@ import com.example.mimochat.data.local.MemoryDao
 import com.example.mimochat.data.local.MessageDao
 
 /**
- * 上下文构建器 - 按完整对话轮次裁剪
+ * 上下文构建器 - 按完整对话轮次裁剪。
  *
  * 规则：
- * 1. system prompt 永远在最前
- * 2. 记忆注入（有独立长度限制）
- * 3. 历史按完整轮次裁剪（user+assistant 为一轮）
- * 4. 当前用户消息始终保留
+ * 1. 当前用户消息优先保留，超过硬上限时做防御性截断
+ * 2. system prompt 与记忆占用剩余预算
+ * 3. 历史按完整轮次从新到旧加入
+ * 4. 最多保留 30 轮历史
  * 5. 排除 FAILED/STOPPED/PENDING/STREAMING 消息
  */
 class ContextBuilder(
@@ -19,14 +19,11 @@ class ContextBuilder(
     private val memoryDao: MemoryDao
 ) {
     companion object {
-        private const val MAX_CONTEXT_CHARS = 30_000
+        const val MAX_CONTEXT_CHARS = 30_000
         private const val MAX_MEMORY_CHARS = 2_000
         private const val MAX_HISTORY_ROUNDS = 30
     }
 
-    /**
-     * 构建对话轮次
-     */
     data class ConversationTurn(
         val user: MessageEntity,
         val assistant: MessageEntity?
@@ -37,36 +34,33 @@ class ContextBuilder(
         systemPrompt: String,
         currentUserMessageId: String? = null
     ): List<Map<String, Any>> {
-        val context = mutableListOf<Map<String, Any>>()
+        val allMessages = messageDao.getByConversation(conversationId)
+        val currentMessage = currentUserMessageId?.let { id ->
+            allMessages.find { it.id == id && it.role == "user" }
+        }
+        val currentContent = currentMessage?.content?.take(MAX_CONTEXT_CHARS).orEmpty()
 
-        // 1. System prompt + 记忆
         val memoryText = buildMemoryText()
         val fullSystemPrompt = if (memoryText.isNotBlank()) {
             "$systemPrompt\n\n$memoryText"
         } else {
             systemPrompt
         }
-        if (fullSystemPrompt.isNotBlank()) {
-            context.add(mapOf("role" to "system", "content" to fullSystemPrompt))
+        val systemBudget = (MAX_CONTEXT_CHARS - currentContent.length).coerceAtLeast(0)
+        val boundedSystemPrompt = fullSystemPrompt.take(systemBudget)
+
+        val context = mutableListOf<Map<String, Any>>()
+        if (boundedSystemPrompt.isNotBlank()) {
+            context.add(mapOf("role" to "system", "content" to boundedSystemPrompt))
         }
 
-        // 2. 获取有效历史消息
-        val allMessages = messageDao.getByConversation(conversationId)
         val validMessages = allMessages.filter { msg ->
-            msg.status == MessageStatus.SUCCESS &&
-                msg.id != currentUserMessageId
+            msg.status == MessageStatus.SUCCESS && msg.id != currentUserMessageId
         }
-
-        // 3. 组织为完整轮次
         val turns = buildTurns(validMessages)
 
-        // 4. 从最近轮次向前裁剪
-        val currentMessage = currentUserMessageId?.let { id ->
-            allMessages.find { it.id == id && it.role == "user" }
-        }
-        var usedChars = fullSystemPrompt.length + (currentMessage?.content?.length ?: 0)
+        var usedChars = boundedSystemPrompt.length + currentContent.length
         val selectedTurns = mutableListOf<ConversationTurn>()
-
         for (turn in turns.reversed()) {
             if (selectedTurns.size >= MAX_HISTORY_ROUNDS) break
             val turnChars = turn.user.content.length + (turn.assistant?.content?.length ?: 0)
@@ -76,25 +70,20 @@ class ContextBuilder(
         }
         selectedTurns.reverse()
 
-        // 5. 展开为消息列表
         for (turn in selectedTurns) {
             context.add(mapOf("role" to "user", "content" to turn.user.content))
-            if (turn.assistant != null) {
-                context.add(mapOf("role" to "assistant", "content" to turn.assistant.content))
+            turn.assistant?.let {
+                context.add(mapOf("role" to "assistant", "content" to it.content))
             }
         }
 
-        // 6. 追加当前用户消息（如果有）
         if (currentMessage != null) {
-            context.add(mapOf("role" to "user", "content" to currentMessage.content))
+            context.add(mapOf("role" to "user", "content" to currentContent))
         }
 
         return context
     }
 
-    /**
-     * 将消息列表组织为完整轮次（user + assistant 配对）
-     */
     private fun buildTurns(messages: List<MessageEntity>): List<ConversationTurn> {
         val turns = mutableListOf<ConversationTurn>()
         var pendingUser: MessageEntity? = null
@@ -102,26 +91,18 @@ class ContextBuilder(
         for (msg in messages) {
             when (msg.role) {
                 "user" -> {
-                    // 如果有未配对的 user，先保存为无 assistant 的轮次
-                    if (pendingUser != null) {
-                        turns.add(ConversationTurn(pendingUser, null))
-                    }
+                    pendingUser?.let { turns.add(ConversationTurn(it, null)) }
                     pendingUser = msg
                 }
                 "assistant" -> {
-                    if (pendingUser != null) {
-                        turns.add(ConversationTurn(pendingUser, msg))
+                    pendingUser?.let {
+                        turns.add(ConversationTurn(it, msg))
                         pendingUser = null
                     }
-                    // 如果没有对应的 user，忽略孤立的 assistant
                 }
             }
         }
-        // 最后的未配对 user
-        if (pendingUser != null) {
-            turns.add(ConversationTurn(pendingUser, null))
-        }
-
+        pendingUser?.let { turns.add(ConversationTurn(it, null)) }
         return turns
     }
 

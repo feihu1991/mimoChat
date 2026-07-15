@@ -19,10 +19,11 @@ import kotlinx.serialization.json.*
 
 object MimoClient {
     private var client: HttpClient? = null
-    private var currentCall: io.ktor.client.request.HttpRequestBuilder? = null
 
     private fun getClient(config: MimoConnection): HttpClient {
         return client ?: HttpClient(OkHttp) {
+            // 所有非 2xx 响应直接抛出异常，避免把 401/403/5xx 误判为可达。
+            expectSuccess = true
             install(ContentNegotiation) {
                 json(Json {
                     ignoreUnknownKeys = true
@@ -56,7 +57,6 @@ object MimoClient {
     private fun normalizeBaseUrl(url: String): String = url.trimEnd('/')
 
     // ── Models ──
-
     suspend fun loadModels(config: MimoConnection): List<String> {
         val response = getClient(config).get("${normalizeBaseUrl(config.baseUrl)}/models") {
             headers(config).forEach { (key, value) -> header(key, value) }
@@ -67,16 +67,13 @@ object MimoClient {
             try {
                 if (element is JsonObject) element["id"]?.jsonPrimitive?.content
                 else element.jsonPrimitive.content
-            } catch (_: Exception) { null }
+            } catch (_: Exception) {
+                null
+            }
         }.sorted()
     }
 
     // ── Streaming Chat ──
-
-    /**
-     * 流式聊天完成 - 返回 Flow<StreamChunk>
-     * 支持取消（通过协程取消）
-     */
     fun chatCompletionStream(
         config: MimoConnection,
         model: String,
@@ -85,7 +82,6 @@ object MimoClient {
     ): Flow<StreamChunk> = flow {
         val content: Any = if (images.isNotEmpty()) {
             buildList {
-                // 先放文本（最后一条 user message 的 content）
                 val lastUserText = messages.lastOrNull { it["role"] == "user" }
                     ?.get("content") as? String ?: ""
                 add(mapOf("type" to "text", "text" to lastUserText))
@@ -97,10 +93,8 @@ object MimoClient {
             messages.lastOrNull { it["role"] == "user" }?.get("content") as? String ?: ""
         }
 
-        // 构建完整 messages 数组（含历史）
         val apiMessages = messages.toMutableList()
         if (images.isNotEmpty()) {
-            // 替换最后一条 user message 的 content 为多模态格式
             val lastIndex = apiMessages.indexOfLast { it["role"] == "user" }
             if (lastIndex >= 0) {
                 apiMessages[lastIndex] = apiMessages[lastIndex].toMutableMap().apply {
@@ -118,9 +112,7 @@ object MimoClient {
         val response = getClient(config).post("${normalizeBaseUrl(config.baseUrl)}/chat/completions") {
             headers(config).forEach { (key, value) -> header(key, value) }
             setBody(body)
-            timeout {
-                requestTimeoutMillis = 120_000
-            }
+            timeout { requestTimeoutMillis = 120_000 }
         }
 
         val channel = response.bodyAsChannel()
@@ -131,13 +123,10 @@ object MimoClient {
             }
         }
 
-        ChatStreamParser.parseStream(lineFlow).collect { chunk ->
-            emit(chunk)
-        }
+        ChatStreamParser.parseStream(lineFlow).collect { chunk -> emit(chunk) }
     }.flowOn(Dispatchers.IO)
 
-    // ── Non-streaming Chat (legacy fallback) ──
-
+    // ── Non-streaming Chat ──
     suspend fun chatCompletion(
         config: MimoConnection,
         model: String,
@@ -174,14 +163,16 @@ object MimoClient {
     }
 
     // ── ASR ──
-
     suspend fun speechRecognition(config: MimoConnection, audioDataUrl: String): String {
         val body = mapOf(
             "model" to "mimo-v2.5-asr",
             "messages" to listOf(
-                mapOf("role" to "user", "content" to listOf(
-                    mapOf("type" to "input_audio", "input_audio" to mapOf("data" to audioDataUrl))
-                ))
+                mapOf(
+                    "role" to "user",
+                    "content" to listOf(
+                        mapOf("type" to "input_audio", "input_audio" to mapOf("data" to audioDataUrl))
+                    )
+                )
             ),
             "asr_options" to mapOf("language" to "auto")
         )
@@ -198,7 +189,6 @@ object MimoClient {
     }
 
     // ── TTS ──
-
     suspend fun synthesizeSpeech(
         config: MimoConnection,
         model: String,
@@ -237,7 +227,6 @@ object MimoClient {
     }
 
     // ── Probe ──
-
     suspend fun probeModel(config: MimoConnection, model: String): ProbeResult {
         val capability = capabilityFor(model)
         val started = System.currentTimeMillis()
@@ -252,14 +241,16 @@ object MimoClient {
             val latency = System.currentTimeMillis() - started
             val hasOutput = data.containsKey("choices") || data.containsKey("output") || data.containsKey("id")
             ProbeResult(
-                model = model, capability = capability,
+                model = model,
+                capability = capability,
                 status = if (hasOutput) ProbeStatus.PASSED else ProbeStatus.REACHABLE,
                 latency = latency,
                 detail = if (hasOutput) "功能响应正常" else "接口可达，响应结构非标准"
             )
         } catch (e: Exception) {
             ProbeResult(
-                model = model, capability = capability,
+                model = model,
+                capability = capability,
                 status = ProbeStatus.FAILED,
                 latency = System.currentTimeMillis() - started,
                 detail = translateError(e)
@@ -294,19 +285,35 @@ object MimoClient {
             "语音识别" -> mapOf(
                 "model" to model,
                 "messages" to listOf(
-                    mapOf("role" to "user", "content" to listOf(
-                        mapOf("type" to "input_audio", "input_audio" to mapOf("data" to "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="))
-                    ))
+                    mapOf(
+                        "role" to "user",
+                        "content" to listOf(
+                            mapOf(
+                                "type" to "input_audio",
+                                "input_audio" to mapOf(
+                                    "data" to "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="
+                                )
+                            )
+                        )
+                    )
                 ),
                 "asr_options" to mapOf("language" to "auto")
             )
             "多模态理解" -> mapOf(
                 "model" to model,
                 "messages" to listOf(
-                    mapOf("role" to "user", "content" to listOf(
-                        mapOf("type" to "text", "text" to "只回答 OK。"),
-                        mapOf("type" to "image_url", "image_url" to mapOf("url" to "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="))
-                    ))
+                    mapOf(
+                        "role" to "user",
+                        "content" to listOf(
+                            mapOf("type" to "text", "text" to "只回答 OK。"),
+                            mapOf(
+                                "type" to "image_url",
+                                "image_url" to mapOf(
+                                    "url" to "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+                                )
+                            )
+                        )
+                    )
                 ),
                 "max_tokens" to 12
             )
