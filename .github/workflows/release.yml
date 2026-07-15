@@ -112,6 +112,13 @@ jobs:
           set -euo pipefail
           printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > android/mimochat-release.jks
           chmod 600 android/mimochat-release.jks
+          KS_SIZE=$(wc -c < android/mimochat-release.jks)
+          echo "Decoded keystore size: $KS_SIZE bytes"
+          if [ "$KS_SIZE" -lt 100 ]; then
+            echo "::error::Decoded keystore is too small ($KS_SIZE bytes). The RELEASE_KEYSTORE_BASE64 secret may be empty or truncated."
+            xxd android/mimochat-release.jks | head -5
+            exit 1
+          fi
 
       - name: Verify keystore credentials
         shell: bash
