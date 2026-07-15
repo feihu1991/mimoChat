@@ -174,7 +174,7 @@ class AppUpdateManager(context: Context) : AutoCloseable {
 
         val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            appContext.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            appContext.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
         } else {
             @Suppress("DEPRECATION")
             appContext.registerReceiver(receiver, filter)
@@ -229,7 +229,8 @@ class AppUpdateManager(context: Context) : AutoCloseable {
 
     private fun isTrustedApkUrl(url: String): Boolean {
         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return false
-        return uri.scheme == "https" && uri.host.equals("github.com", ignoreCase = true)
+        return uri.scheme == "https" &&
+            uri.host?.equals("github.com", ignoreCase = true) == true
     }
 
     private fun clearDownloadReceiver() {
