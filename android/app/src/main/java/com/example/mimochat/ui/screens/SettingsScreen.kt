@@ -40,31 +40,22 @@ fun SettingsScreen(
 ) {
     var showApiKeyDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val updateManager = remember(context) { AppUpdateManager(context.applicationContext) }
+    val updateManager = remember(context) { AppUpdateManager.getInstance(context) }
     val updateScope = rememberCoroutineScope()
-    var updateState by remember { mutableStateOf<AppUpdateState>(AppUpdateState.Idle) }
-
-    DisposableEffect(updateManager) {
-        onDispose { updateManager.close() }
-    }
+    val updateState by updateManager.state.collectAsState()
 
     fun checkForUpdate() {
         if (updateState is AppUpdateState.Checking || updateState is AppUpdateState.Downloading) return
         updateScope.launch {
-            updateState = AppUpdateState.Checking
-            updateState = updateManager.checkForUpdate(BuildConfig.VERSION_NAME)
+            updateManager.checkForUpdate(BuildConfig.VERSION_NAME)
         }
     }
 
     fun handleUpdateClick() {
-        when (val state = updateState) {
-            is AppUpdateState.Available -> {
-                updateManager.downloadAndInstall(state.release) { newState ->
-                    updateState = newState
-                }
-            }
+        when (updateState) {
+            is AppUpdateState.Available -> updateManager.downloadAndInstall()
             is AppUpdateState.Downloading,
-            is AppUpdateState.Checking -> Unit
+            AppUpdateState.Checking -> Unit
             else -> checkForUpdate()
         }
     }
