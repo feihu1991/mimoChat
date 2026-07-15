@@ -30,7 +30,7 @@ object VersionComparator {
         val mainAndPreRelease = normalized.split('-', limit = 2)
         val numbers = mainAndPreRelease.first()
             .split('.')
-            .map { part -> part.takeWhile(Char::isDigit).toIntOrNull() ?: 0 }
+            .map { part -> part.takeWhile { it.isDigit() }.toIntOrNull() ?: 0 }
         val preRelease = mainAndPreRelease.getOrNull(1)?.takeIf { it.isNotBlank() }
         return ParsedVersion(numbers = numbers, preRelease = preRelease)
     }
