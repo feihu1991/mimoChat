@@ -1,5 +1,6 @@
 package com.example.mimochat.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -18,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.mimochat.data.*
@@ -27,6 +29,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun ChatScreen(
     messages: List<Message>,
+    conversationTitle: String,
     role: Role,
     model: ModelId,
     input: String,
@@ -53,14 +56,12 @@ fun ChatScreen(
         if (messages.isEmpty()) return
         isProgrammaticScroll = true
         try {
-            if (animated) listState.animateScrollToItem(0)
-            else listState.scrollToItem(0)
+            if (animated) listState.animateScrollToItem(0) else listState.scrollToItem(0)
         } finally {
             isProgrammaticScroll = false
         }
     }
 
-    // 只把用户主动滚动视为“离开底部”，避免流式内容增长误关自动跟随。
     LaunchedEffect(listState) {
         snapshotFlow {
             Triple(
@@ -78,7 +79,6 @@ fun ChatScreen(
     val latestUserMessageId = messages.lastOrNull { it.role == MessageRole.USER }?.id
     var previousUserMessageId by remember { mutableStateOf(latestUserMessageId) }
 
-    // 从历史位置发送新消息时，立即回到底部并恢复流式跟随。
     LaunchedEffect(latestUserMessageId) {
         if (latestUserMessageId != null && latestUserMessageId != previousUserMessageId) {
             scrollPolicy.onNewUserMessage()
@@ -87,7 +87,6 @@ fun ChatScreen(
         previousUserMessageId = latestUserMessageId
     }
 
-    // 流式文本变化时，仅在用户没有离开底部的情况下跟随。
     val latestMessage = messages.lastOrNull()
     LaunchedEffect(
         latestMessage?.id,
@@ -109,18 +108,31 @@ fun ChatScreen(
         }
     }
 
-    Column(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        ChatTopBar(role = role, model = model, onMenu = onMenu, onNew = onNew, onModel = onModel)
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        ChatTopBar(
+            conversationTitle = conversationTitle,
+            role = role,
+            model = model,
+            onMenu = onMenu,
+            onNew = onNew,
+            onModel = onModel
+        )
 
         Box(modifier = Modifier.weight(1f)) {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize().padding(horizontal = 17.dp),
-                contentPadding = PaddingValues(bottom = 100.dp, top = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
                 reverseLayout = true
             ) {
-                if (messages.isEmpty()) item { RoleWelcome(role = role) }
+                if (messages.isEmpty()) {
+                    item { RoleWelcome(role = role) }
+                }
                 items(messages.reversed(), key = { it.id }) { message ->
                     MessageBubble(
                         message = message,
@@ -133,33 +145,67 @@ fun ChatScreen(
             }
 
             if (showScrollButton) {
-                FloatingActionButton(
+                Surface(
                     onClick = {
                         scrollPolicy.onScrollToBottomClicked()
                         scope.launch { scrollToBottom(animated = true) }
                     },
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).size(40.dp),
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.onSurface
-                ) { Icon(Icons.Default.KeyboardArrowDown, "回到底部", modifier = Modifier.size(20.dp)) }
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 12.dp)
+                        .size(38.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    shadowElevation = 4.dp
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.KeyboardArrowDown,
+                            contentDescription = "回到底部",
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
             }
         }
 
         if (!hasApiKey) {
             Surface(
                 color = MaterialTheme.colorScheme.errorContainer,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                shape = RoundedCornerShape(8.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(12.dp)
             ) {
-                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(18.dp)
+                    )
                     Spacer(Modifier.width(8.dp))
-                    Text("请先在设置中配置 API Key", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                    Text(
+                        "请先在设置中配置 API Key",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
                 }
             }
         }
 
-        ComposerArea(input = input, isStreaming = isStreaming, onInput = onInput, onSend = onSend, onStop = onStop)
+        ComposerArea(
+            input = input,
+            model = model,
+            isStreaming = isStreaming,
+            onInput = onInput,
+            onSend = onSend,
+            onStop = onStop
+        )
     }
 }
 
@@ -171,32 +217,31 @@ private fun MessageBubble(
     onCopy: () -> Unit,
     onEdit: (String) -> Unit
 ) {
-    var showMenu by remember { mutableStateOf(false) }
-    var isEditing by remember { mutableStateOf(false) }
-    var editText by remember { mutableStateOf(message.text) }
+    var showMenu by remember(message.id) { mutableStateOf(false) }
+    var isEditing by remember(message.id) { mutableStateOf(false) }
+    var editText by remember(message.id) { mutableStateOf(message.text) }
     val isUser = message.role == MessageRole.USER
     val isFailed = message.status == MessageStatus.FAILED
     val isStopped = message.status == MessageStatus.STOPPED
     val isStreamingMsg = message.status == MessageStatus.STREAMING
     val isPending = message.status == MessageStatus.PENDING
 
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-        horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
-    ) {
-        SelectionContainer {
+    if (isUser) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.End
+        ) {
             Surface(
+                modifier = Modifier
+                    .widthIn(max = 520.dp)
+                    .clickable(enabled = !isEditing) { showMenu = !showMenu },
                 shape = RoundedCornerShape(
-                    topStart = 19.dp, topEnd = 19.dp,
-                    bottomStart = if (isUser) 19.dp else 6.dp,
-                    bottomEnd = if (isUser) 6.dp else 19.dp
+                    topStart = 20.dp,
+                    topEnd = 20.dp,
+                    bottomStart = 20.dp,
+                    bottomEnd = 6.dp
                 ),
-                color = when {
-                    isUser -> UserMessageBackground
-                    isFailed -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
-                    else -> Color.Transparent
-                },
-                modifier = Modifier.clickable { showMenu = !showMenu }
+                color = UserMessageBackground
             ) {
                 if (isEditing) {
                     Column(modifier = Modifier.padding(12.dp)) {
@@ -211,82 +256,167 @@ private fun MessageBubble(
                                 isEditing = false
                                 if (editText.isNotBlank() && editText != message.text) onEdit(editText)
                             }) { Text("保存并重新发送") }
-                            TextButton(onClick = { isEditing = false; editText = message.text }) { Text("取消") }
+                            TextButton(onClick = {
+                                isEditing = false
+                                editText = message.text
+                            }) { Text("取消") }
                         }
                     }
                 } else {
-                    Column {
-                        if (isUser) {
-                            Text(
-                                text = message.text,
-                                modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
-                                fontSize = 14.sp, lineHeight = 22.sp,
-                                color = UserMessageText
-                            )
-                        } else {
-                            MarkdownText(
-                                text = when {
-                                    message.text.isEmpty() && isStreamingMsg -> "正在思考…"
-                                    message.text.isEmpty() && isPending -> "正在连接…"
-                                    isFailed && message.text.isEmpty() -> "请求失败"
-                                    else -> message.text
-                                },
-                                modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp)
-                            )
-                            if (message.text.contains("```") && message.text.isNotBlank()) {
-                                TextButton(
-                                    onClick = { onCopy() },
-                                    modifier = Modifier.padding(start = 8.dp, bottom = 4.dp),
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                                ) {
-                                    Icon(Icons.Default.ContentCopy, null, modifier = Modifier.size(12.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("复制代码", fontSize = 10.sp)
-                                }
-                            }
-                        }
+                    SelectionContainer {
+                        Text(
+                            text = message.text,
+                            modifier = Modifier.padding(horizontal = 15.dp, vertical = 11.dp),
+                            fontSize = 14.sp,
+                            lineHeight = 22.sp,
+                            color = UserMessageText
+                        )
                     }
                 }
             }
-        }
 
-        if (isStreamingMsg && message.text.isNotEmpty()) {
-            LinearProgressIndicator(
-                modifier = Modifier.width(40.dp).height(2.dp).padding(top = 2.dp),
-                color = MaterialTheme.colorScheme.primary
-            )
+            if (showMenu && !isPending && !isStreamingMsg) {
+                Row(
+                    modifier = Modifier.padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    SmallButton(
+                        onClick = { onCopy(); showMenu = false },
+                        icon = Icons.Default.ContentCopy,
+                        label = "复制"
+                    )
+                    SmallButton(
+                        onClick = {
+                            editText = message.text
+                            isEditing = true
+                            showMenu = false
+                        },
+                        icon = Icons.Default.Edit,
+                        label = "编辑"
+                    )
+                }
+            }
         }
+        return
+    }
 
-        if (isFailed && message.errorMessage != null) {
-            Text(
-                message.errorMessage,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(top = 2.dp, start = 4.dp)
-            )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Start,
+        verticalAlignment = Alignment.Top
+    ) {
+        Surface(
+            modifier = Modifier.size(30.dp),
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.inverseSurface,
+            contentColor = MaterialTheme.colorScheme.inverseOnSurface
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text("M", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            }
         }
+        Spacer(Modifier.width(10.dp))
 
-        if (isStopped && message.text.isNotBlank()) {
-            Text(
-                "已停止生成",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 2.dp, start = 4.dp)
-            )
-        }
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .widthIn(max = 760.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "MiMo Code",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                when {
+                    isStreamingMsg -> StatusLabel("生成中", MaterialTheme.colorScheme.primary)
+                    isPending -> StatusLabel("连接中", MaterialTheme.colorScheme.onSurfaceVariant)
+                    isStopped -> StatusLabel("已停止", MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Spacer(Modifier.height(6.dp))
 
-        if (showMenu && !isStreamingMsg && !isPending) {
-            Row(modifier = Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (isUser) {
-                    SmallButton(onClick = { onCopy(); showMenu = false }, icon = Icons.Default.ContentCopy, label = "复制")
-                    SmallButton(onClick = { editText = message.text; isEditing = true; showMenu = false }, icon = Icons.Default.Edit, label = "编辑")
+            val displayText = when {
+                message.text.isEmpty() && isStreamingMsg -> "正在分析…"
+                message.text.isEmpty() && isPending -> "正在连接…"
+                isFailed && message.text.isEmpty() -> "请求失败"
+                else -> message.text
+            }
+
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !isPending && !isStreamingMsg) { showMenu = !showMenu },
+                color = if (isFailed) {
+                    MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
                 } else {
+                    Color.Transparent
+                },
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                SelectionContainer {
+                    MarkdownText(
+                        text = displayText,
+                        modifier = Modifier.padding(
+                            horizontal = if (isFailed) 12.dp else 0.dp,
+                            vertical = if (isFailed) 10.dp else 0.dp
+                        )
+                    )
+                }
+            }
+
+            if (isStreamingMsg && message.text.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    modifier = Modifier.width(44.dp).height(2.dp),
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            if (message.text.contains("```") && message.text.isNotBlank()) {
+                TextButton(
+                    onClick = onCopy,
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                ) {
+                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(13.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("复制代码", fontSize = 11.sp)
+                }
+            }
+
+            if (isFailed && message.errorMessage != null) {
+                Text(
+                    message.errorMessage,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
+
+            if (showMenu && !isStreamingMsg && !isPending) {
+                Row(
+                    modifier = Modifier.padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
                     if (message.text.isNotBlank()) {
-                        SmallButton(onClick = { onCopy(); showMenu = false }, icon = Icons.Default.ContentCopy, label = "复制")
-                        SmallButton(onClick = { onRegenerate(); showMenu = false }, icon = Icons.Default.AutoFixHigh, label = "重新生成")
+                        SmallButton(
+                            onClick = { onCopy(); showMenu = false },
+                            icon = Icons.Default.ContentCopy,
+                            label = "复制"
+                        )
+                        SmallButton(
+                            onClick = { onRegenerate(); showMenu = false },
+                            icon = Icons.Default.AutoFixHigh,
+                            label = "重新生成"
+                        )
                     }
                     if (isFailed) {
-                        SmallButton(onClick = { onRetry(); showMenu = false }, icon = Icons.Default.Refresh, label = "重试")
+                        SmallButton(
+                            onClick = { onRetry(); showMenu = false },
+                            icon = Icons.Default.Refresh,
+                            label = "重试"
+                        )
                     }
                 }
             }
@@ -295,9 +425,23 @@ private fun MessageBubble(
 }
 
 @Composable
-private fun SmallButton(onClick: () -> Unit, icon: androidx.compose.ui.graphics.vector.ImageVector, label: String) {
-    TextButton(onClick = onClick, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp), modifier = Modifier.height(32.dp)) {
-        Icon(icon, null, modifier = Modifier.size(14.dp))
+private fun StatusLabel(text: String, color: Color) {
+    Spacer(Modifier.width(8.dp))
+    Text(text, style = MaterialTheme.typography.labelSmall, color = color)
+}
+
+@Composable
+private fun SmallButton(
+    onClick: () -> Unit,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String
+) {
+    TextButton(
+        onClick = onClick,
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+        modifier = Modifier.height(32.dp)
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(14.dp))
         Spacer(Modifier.width(4.dp))
         Text(label, fontSize = 11.sp)
     }
@@ -309,57 +453,293 @@ private fun MarkdownText(text: String, modifier: Modifier = Modifier) {
         text = text,
         modifier = modifier,
         fontSize = 14.sp,
-        lineHeight = 22.sp,
+        lineHeight = 23.sp,
         color = MaterialTheme.colorScheme.onSurface
     )
 }
 
 @Composable
-private fun ChatTopBar(role: Role, model: ModelId, onMenu: () -> Unit, onNew: () -> Unit, onModel: () -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onMenu) { Icon(Icons.Default.Menu, "打开历史记录", tint = MaterialTheme.colorScheme.onSurface) }
-        Spacer(Modifier.width(8.dp))
-        Row(modifier = Modifier.weight(1f).clickable(onClick = onModel), verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(35.dp).clip(RoundedCornerShape(13.dp)).background(Color(android.graphics.Color.parseColor(role.color))), contentAlignment = Alignment.Center) {
-                Text(role.name.firstOrNull()?.toString() ?: "M", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+private fun ChatTopBar(
+    conversationTitle: String,
+    role: Role,
+    model: ModelId,
+    onMenu: () -> Unit,
+    onNew: () -> Unit,
+    onModel: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onMenu) {
+                Icon(Icons.Default.Menu, contentDescription = "打开会话列表")
             }
-            Spacer(Modifier.width(8.dp))
-            Column {
-                Text(role.name, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
-                Text(model.displayName, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(onClick = onModel)
+                    .padding(horizontal = 4.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "MiMo Code",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        "  /  ",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                    Text(
+                        conversationTitle.ifBlank { "新对话" },
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                }
+                Spacer(Modifier.height(3.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(Color(android.graphics.Color.parseColor(role.color)))
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "${role.name} · ${model.displayName}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.width(3.dp))
+                    Icon(
+                        Icons.Default.KeyboardArrowDown,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
-            Spacer(Modifier.width(4.dp))
-            Icon(Icons.Default.KeyboardArrowDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp))
+            IconButton(onClick = onNew) {
+                Icon(Icons.Default.AddComment, contentDescription = "新建对话")
+            }
         }
-        IconButton(onClick = onNew) { Icon(Icons.Default.Chat, "新建对话", tint = MaterialTheme.colorScheme.onSurface) }
     }
 }
 
 @Composable
 private fun RoleWelcome(role: Role) {
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(modifier = Modifier.size(78.dp).clip(RoundedCornerShape(29.dp)).background(Color(android.graphics.Color.parseColor(role.color))), contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.Star, null, tint = Color.White, modifier = Modifier.size(31.dp))
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 6.dp, vertical = 36.dp),
+        horizontalAlignment = Alignment.Start
+    ) {
+        Surface(
+            modifier = Modifier.size(48.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = Color(android.graphics.Color.parseColor(role.color))
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(
+                    role.name.firstOrNull()?.toString() ?: "M",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            }
         }
-        Spacer(Modifier.height(20.dp))
-        Text("和 ${role.name} 聊聊", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(5.dp))
-        Text(role.description, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(22.dp))
+        Text(
+            "今天想改什么？",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "描述代码、错误或需求，让 ${role.name} 帮你分析并给出可执行修改方案。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            lineHeight = 21.sp
+        )
+        Spacer(Modifier.height(24.dp))
+        WelcomeHint(Icons.Default.Code, "分析代码与定位问题")
+        Spacer(Modifier.height(10.dp))
+        WelcomeHint(Icons.Default.Difference, "整理修改方案和代码差异")
+        Spacer(Modifier.height(10.dp))
+        WelcomeHint(Icons.Default.Rule, "检查风险、边界和遗漏")
+        Spacer(Modifier.height(22.dp))
+        Text(
+            "本地端不提供构建、打包、部署或发布操作。",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
 @Composable
-private fun ComposerArea(input: String, isStreaming: Boolean, onInput: (String) -> Unit, onSend: () -> Unit, onStop: () -> Unit) {
-    Surface(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp), shape = RoundedCornerShape(21.dp), color = MaterialTheme.colorScheme.surface, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-        Row(modifier = Modifier.fillMaxWidth().padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(value = input, onValueChange = onInput, modifier = Modifier.weight(1f), placeholder = { Text("发消息…", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }, colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent), maxLines = 6)
-            if (isStreaming) {
-                IconButton(onClick = onStop, modifier = Modifier.size(38.dp)) { Icon(Icons.Default.Stop, "停止生成", tint = MaterialTheme.colorScheme.error) }
-            } else {
-                IconButton(onClick = onSend, enabled = input.isNotBlank(), modifier = Modifier.size(38.dp)) {
-                    Icon(Icons.Default.Send, "发送", tint = if (input.isNotBlank()) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp).background(if (input.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant, CircleShape).padding(4.dp))
+private fun WelcomeHint(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 15.dp, vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(text, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+@Composable
+private fun ComposerArea(
+    input: String,
+    model: ModelId,
+    isStreaming: Boolean,
+    onInput: (String) -> Unit,
+    onSend: () -> Unit,
+    onStop: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.background)
+            .imePadding()
+            .navigationBarsPadding()
+            .padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 760.dp),
+            shape = RoundedCornerShape(22.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            shadowElevation = 4.dp
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = onInput,
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = {
+                        Text(
+                            "向 MiMo Code 描述要完成的任务",
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color.Transparent,
+                        unfocusedBorderColor = Color.Transparent
+                    ),
+                    minLines = 1,
+                    maxLines = 6
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 6.dp, end = 2.dp, bottom = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(100.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.PhoneAndroid,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                "本地会话",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Icon(
+                        Icons.Default.AutoAwesome,
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        model.displayName,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.weight(1f))
+
+                    Surface(
+                        onClick = if (isStreaming) onStop else onSend,
+                        enabled = isStreaming || input.isNotBlank(),
+                        modifier = Modifier.size(36.dp),
+                        shape = CircleShape,
+                        color = when {
+                            isStreaming -> MaterialTheme.colorScheme.onSurface
+                            input.isNotBlank() -> MaterialTheme.colorScheme.primary
+                            else -> MaterialTheme.colorScheme.surfaceVariant
+                        }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = if (isStreaming) Icons.Default.Stop else Icons.Default.ArrowUpward,
+                                contentDescription = if (isStreaming) "停止生成" else "发送",
+                                modifier = Modifier.size(if (isStreaming) 15.dp else 18.dp),
+                                tint = when {
+                                    isStreaming -> MaterialTheme.colorScheme.surface
+                                    input.isNotBlank() -> MaterialTheme.colorScheme.onPrimary
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
+                        }
+                    }
                 }
             }
         }
+
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "本地端不执行打包、部署或发布操作",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.76f)
+        )
     }
 }
