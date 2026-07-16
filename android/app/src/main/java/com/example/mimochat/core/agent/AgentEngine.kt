@@ -10,14 +10,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -180,7 +178,7 @@ class AgentToolExecutor(
             when (call.name) {
                 "list_files" -> {
                     val paths = workspace.listFiles(
-                        pattern = args.string("pattern").ifBlank { null },
+                        pattern = args.string("pattern").takeIf { it.isNotBlank() },
                         limit = args.int("limit", 300)
                     )
                     success(call, if (paths.isEmpty()) "工作区没有匹配文件" else paths.joinToString("\n"), "列出 ${paths.size} 个文件")
@@ -188,7 +186,7 @@ class AgentToolExecutor(
                 "grep_files" -> {
                     val output = workspace.grep(
                         query = args.requiredString("query"),
-                        glob = args.string("glob").ifBlank { null },
+                        glob = args.string("glob").takeIf { it.isNotBlank() },
                         limit = args.int("limit", 100)
                     )
                     success(call, output, "搜索项目内容")
