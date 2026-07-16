@@ -15,9 +15,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.mimochat.data.*
 import com.example.mimochat.ui.main.MainViewModel
 import com.example.mimochat.ui.screens.*
+import com.example.mimochat.ui.voice.VoiceViewModel
 
 @Composable
-fun MainScreen(viewModel: MainViewModel = viewModel()) {
+fun MainScreen(
+    viewModel: MainViewModel = viewModel(),
+    voiceViewModel: VoiceViewModel = viewModel()
+) {
     val screen by viewModel.screen.collectAsState()
     val drawerOpen by viewModel.drawerOpen.collectAsState()
     val modelOpen by viewModel.modelOpen.collectAsState()
@@ -32,6 +36,11 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val workspaceState by viewModel.workspaceSyncState.collectAsState()
     val pendingApproval by viewModel.pendingApproval.collectAsState()
 
+    val playingMessageId by voiceViewModel.playingMessageId.collectAsState()
+    val loadingMessageId by voiceViewModel.loadingMessageId.collectAsState()
+    val voiceDesignState by voiceViewModel.designState.collectAsState()
+    val voiceToast by voiceViewModel.toast.collectAsState()
+
     var input by remember { mutableStateOf("") }
 
     val currentConversation = conversations.find { it.id == conversationId }
@@ -40,6 +49,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         ?: DEFAULT_ROLES[0]
     val currentModel = currentConversation?.model?.let { ModelId.fromApiName(it) }
         ?: ModelId.MIMO_V2_5
+    val displayToast = voiceToast.ifBlank { toast }
 
     Box(modifier = Modifier.fillMaxSize()) {
         when (screen) {
@@ -52,6 +62,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     input = input,
                     isStreaming = isStreaming,
                     hasApiKey = viewModel.hasApiKey,
+                    playingMessageId = playingMessageId,
+                    voiceLoadingMessageId = loadingMessageId,
                     onMenu = { viewModel.setDrawerOpen(true) },
                     onNew = { viewModel.startNewConversation(); input = "" },
                     onModel = { viewModel.setModelOpen(true) },
@@ -66,7 +78,9 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     onRetry = { viewModel.retryMessage(it) },
                     onRegenerate = { viewModel.regenerateMessage(it) },
                     onCopy = { viewModel.copyMessage(it) },
-                    onEdit = { id, text -> viewModel.editAndResend(id, text) }
+                    onEdit = { id, text -> viewModel.editAndResend(id, text) },
+                    onSpeak = { voiceViewModel.toggleMessage(it, activeRole) },
+                    onRegenerateVoice = { voiceViewModel.regenerateMessage(it, activeRole) }
                 )
             }
             Screen.SETTINGS -> {
@@ -105,9 +119,30 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 RolesScreen(
                     roles = roles,
                     defaultRoleId = viewModel.defaultRoleId.collectAsState().value,
+                    voiceDesignState = voiceDesignState,
                     onBack = { viewModel.setScreen(Screen.SETTINGS) },
                     onSave = { viewModel.setRoles(it) },
-                    onDefault = { viewModel.setDefaultRoleId(it) }
+                    onDefault = { viewModel.setDefaultRoleId(it) },
+                    onGenerateVoiceCandidates = { roleId, description ->
+                        voiceViewModel.generateVoiceCandidates(roleId, description)
+                    },
+                    onPreviewVoiceCandidate = { voiceViewModel.previewCandidate(it) },
+                    onSelectVoiceCandidate = { roleId, candidateId ->
+                        voiceViewModel.selectCandidate(roleId, candidateId) { samplePath ->
+                            viewModel.setRoles(
+                                roles.map { role ->
+                                    if (role.id == roleId) {
+                                        role.copy(
+                                            voiceModel = VoiceModel.MIMO_V2_5_TTS_VOICECLONE,
+                                            voiceSample = samplePath
+                                        )
+                                    } else {
+                                        role
+                                    }
+                                }
+                            )
+                        }
+                    }
                 )
             }
             Screen.MEMORY -> {
@@ -152,7 +187,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             )
         }
 
-        if (toast.isNotBlank()) {
+        if (displayToast.isNotBlank()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
                 Surface(
                     shape = RoundedCornerShape(12.dp),
@@ -160,7 +195,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     modifier = Modifier.padding(bottom = 100.dp)
                 ) {
                     Text(
-                        toast,
+                        displayToast,
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
                         color = MaterialTheme.colorScheme.inverseOnSurface
                     )
