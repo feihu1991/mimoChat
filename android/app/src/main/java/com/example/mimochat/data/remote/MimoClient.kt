@@ -23,7 +23,7 @@ object MimoClient {
     private fun getClient(config: MimoConnection): HttpClient {
         return client ?: HttpClient(OkHttp) {
             // 所有非 2xx 响应直接抛出异常，避免把 401/403/5xx 误判为可达。
-            expectSuccess = true
+            expectSuccess = false
             install(ContentNegotiation) {
                 json(Json {
                     ignoreUnknownKeys = true
@@ -61,6 +61,7 @@ object MimoClient {
         val response = getClient(config).get("${normalizeBaseUrl(config.baseUrl)}/models") {
             headers(config).forEach { (key, value) -> header(key, value) }
         }
+        requireSuccess(response)
         val data = response.body<JsonObject>()
         val list = data["data"]?.jsonArray ?: data["models"]?.jsonArray ?: emptyList()
         return list.mapNotNull { element ->
@@ -111,9 +112,10 @@ object MimoClient {
 
         val response = getClient(config).post("${normalizeBaseUrl(config.baseUrl)}/chat/completions") {
             headers(config).forEach { (key, value) -> header(key, value) }
-            setBody(body)
+            setBody(toJsonObject(body))
             timeout { requestTimeoutMillis = 120_000 }
         }
+        requireSuccess(response)
 
         val channel = response.bodyAsChannel()
         val lineFlow = flow {
@@ -152,8 +154,9 @@ object MimoClient {
 
         val response = getClient(config).post("${normalizeBaseUrl(config.baseUrl)}/chat/completions") {
             headers(config).forEach { (key, value) -> header(key, value) }
-            setBody(body)
+            setBody(toJsonObject(body))
         }
+        requireSuccess(response)
 
         val data = response.body<JsonObject>()
         return data["choices"]?.jsonArray?.firstOrNull()?.jsonObject
@@ -179,8 +182,9 @@ object MimoClient {
 
         val response = getClient(config).post("${normalizeBaseUrl(config.baseUrl)}/chat/completions") {
             headers(config).forEach { (key, value) -> header(key, value) }
-            setBody(body)
+            setBody(toJsonObject(body))
         }
+        requireSuccess(response)
 
         val data = response.body<JsonObject>()
         return data["choices"]?.jsonArray?.firstOrNull()?.jsonObject
@@ -197,11 +201,17 @@ object MimoClient {
         voiceSample: String? = null,
         voicePrompt: String = "自然、清晰、像面对面聊天一样回应。"
     ): String {
-        val audio = if (model.contains("voiceclone")) {
-            if (voiceSample == null) throw Exception("当前角色还没有录入克隆音色")
-            mapOf("format" to "wav", "voice" to voiceSample)
-        } else {
-            mapOf("format" to "wav", "voice" to voiceName)
+        val audio = when {
+            model.contains("voiceclone") -> {
+                if (voiceSample.isNullOrBlank()) throw Exception("当前角色还没有录入克隆音色")
+                mapOf("format" to "wav", "voice" to voiceSample)
+            }
+            model.contains("voicedesign") -> {
+                mapOf("format" to "wav", "optimize_text_preview" to true)
+            }
+            else -> {
+                mapOf("format" to "wav", "voice" to voiceName)
+            }
         }
 
         val body = mapOf(
@@ -215,8 +225,9 @@ object MimoClient {
 
         val response = getClient(config).post("${normalizeBaseUrl(config.baseUrl)}/chat/completions") {
             headers(config).forEach { (key, value) -> header(key, value) }
-            setBody(body)
+            setBody(toJsonObject(body))
         }
+        requireSuccess(response)
 
         val data = response.body<JsonObject>()
         val audioBase64 = data["choices"]?.jsonArray?.firstOrNull()?.jsonObject
@@ -232,14 +243,20 @@ object MimoClient {
         val started = System.currentTimeMillis()
 
         return try {
+            // 克隆模型必须带真实的音频样本，不能用空音频探测；模型列表已经证明接口可达。
+            if (capability == "声音克隆") {
+                return ProbeResult(model, capability, ProbeStatus.REACHABLE, 0, "模型已发现，录入音频样本后可试听")
+            }
             val body = probeBody(model)
             val response = getClient(config).post("${normalizeBaseUrl(config.baseUrl)}/chat/completions") {
                 headers(config).forEach { (key, value) -> header(key, value) }
-                setBody(body)
+                setBody(toJsonObject(body))
             }
+            requireSuccess(response)
             val data = response.body<JsonObject>()
             val latency = System.currentTimeMillis() - started
-            val hasOutput = data.containsKey("choices") || data.containsKey("output") || data.containsKey("id")
+            val hasOutput = data["choices"]?.jsonArray?.isNotEmpty() == true ||
+                data.containsKey("output") || data.containsKey("id")
             ProbeResult(
                 model = model,
                 capability = capability,
@@ -274,6 +291,14 @@ object MimoClient {
     private fun probeBody(model: String): Map<String, Any> {
         val capability = capabilityFor(model)
         return when (capability) {
+            "声音设计" -> mapOf(
+                "model" to model,
+                "messages" to listOf(
+                    mapOf("role" to "user", "content" to "清晰、自然、语速适中的中文女声。"),
+                    mapOf("role" to "assistant", "content" to "你好，这是声音设计能力检测。")
+                ),
+                "audio" to mapOf("format" to "wav", "optimize_text_preview" to true)
+            )
             "语音合成" -> mapOf(
                 "model" to model,
                 "messages" to listOf(
@@ -315,19 +340,46 @@ object MimoClient {
                         )
                     )
                 ),
-                "max_tokens" to 12
+                "max_completion_tokens" to 12
             )
             "深度推理" -> mapOf(
                 "model" to model,
                 "messages" to listOf(mapOf("role" to "user", "content" to "计算 17×19，只回答结果。")),
-                "max_tokens" to 16
+                "max_completion_tokens" to 16
             )
             else -> mapOf(
                 "model" to model,
                 "messages" to listOf(mapOf("role" to "user", "content" to "只回答 OK。")),
-                "max_tokens" to 16
+                "max_completion_tokens" to 16
             )
         }
+    }
+
+    /** Ktor 的默认序列化器无法直接处理 Map<String, Any> 中的异构嵌套集合。 */
+    private fun toJsonObject(body: Map<String, Any?>): JsonObject =
+        JsonObject(body.mapValues { (_, value) -> toJsonElement(value) })
+
+    private suspend fun requireSuccess(response: HttpResponse) {
+        if (response.status.isSuccess()) return
+        val raw = runCatching { response.bodyAsText() }.getOrNull().orEmpty()
+        val detail = runCatching {
+            Json.parseToJsonElement(raw).jsonObject["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content
+        }.getOrNull()
+            ?: raw.take(400).ifBlank { response.status.description }
+        throw IllegalStateException("HTTP ${response.status.value}: $detail")
+    }
+
+    private fun toJsonElement(value: Any?): JsonElement = when (value) {
+        null -> JsonNull
+        is JsonElement -> value
+        is Map<*, *> -> JsonObject(value.entries.associate { (key, item) ->
+            key.toString() to toJsonElement(item)
+        })
+        is Iterable<*> -> JsonArray(value.map(::toJsonElement))
+        is Array<*> -> JsonArray(value.map(::toJsonElement))
+        is Boolean -> JsonPrimitive(value)
+        is Number -> JsonPrimitive(value)
+        else -> JsonPrimitive(value.toString())
     }
 
     fun translateError(error: Throwable): String {

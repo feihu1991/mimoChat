@@ -88,6 +88,7 @@ enum class Screen {
 
 enum class VoiceModel(val apiName: String) {
     MIMO_V2_5_TTS("mimo-v2.5-tts"),
+    MIMO_V2_5_TTS_VOICEDESIGN("mimo-v2.5-tts-voicedesign"),
     MIMO_V2_5_TTS_VOICECLONE("mimo-v2.5-tts-voiceclone")
 }
 
@@ -102,6 +103,7 @@ data class Role(
     val voiceName: String,
     val voicePrompt: String? = null,
     val voiceSample: String? = null,
+    val voiceGenerated: Boolean = false,
     val color: String
 )
 

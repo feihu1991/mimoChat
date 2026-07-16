@@ -29,7 +29,11 @@ fun RolesScreen(
     defaultRoleId: String,
     onBack: () -> Unit,
     onSave: (List<Role>) -> Unit,
-    onDefault: (String) -> Unit
+    onDefault: (String) -> Unit,
+    onGenerateVoice: (Role) -> Unit,
+    onPreviewVoice: (Role) -> Unit,
+    voiceState: com.example.mimochat.data.VoiceChatState,
+    isGeneratingVoice: Boolean
 ) {
     var editingId by remember { mutableStateOf(roles.firstOrNull()?.id ?: "") }
     val role = roles.find { it.id == editingId } ?: roles.firstOrNull() ?: DEFAULT_ROLES[0]
@@ -38,7 +42,7 @@ fun RolesScreen(
         onSave(roles.map { if (it.id == role.id) patch(it) else it })
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         TopAppBar(
             title = { Text("聊天角色") },
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") } },
@@ -109,22 +113,96 @@ fun RolesScreen(
                 VoiceModel.entries.forEach { vm ->
                     val isSelected = role.voiceModel == vm
                     Surface(
-                        onClick = { updateRole { r -> r.copy(voiceModel = vm) } },
+                        onClick = {
+                            updateRole { r ->
+                                r.copy(
+                                    voiceModel = vm,
+                                    voiceSample = if (vm == VoiceModel.MIMO_V2_5_TTS_VOICEDESIGN) null else r.voiceSample,
+                                    voiceGenerated = if (vm == VoiceModel.MIMO_V2_5_TTS_VOICEDESIGN) false else r.voiceGenerated
+                                )
+                            }
+                        },
                         shape = RoundedCornerShape(12.dp),
                         color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
                             Text(
-                                if (vm == VoiceModel.MIMO_V2_5_TTS) "内置 TTS" else "声音克隆",
+                                when (vm) {
+                                    VoiceModel.MIMO_V2_5_TTS -> "内置 TTS"
+                                    VoiceModel.MIMO_V2_5_TTS_VOICEDESIGN -> "声音设计"
+                                    VoiceModel.MIMO_V2_5_TTS_VOICECLONE -> "声音克隆"
+                                },
                                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
                             )
                             Text(
-                                if (vm == VoiceModel.MIMO_V2_5_TTS) "自然音色" else "需要音频样本",
+                                when (vm) {
+                                    VoiceModel.MIMO_V2_5_TTS -> "自然音色"
+                                    VoiceModel.MIMO_V2_5_TTS_VOICEDESIGN -> "由提示词生成"
+                                    VoiceModel.MIMO_V2_5_TTS_VOICECLONE -> "需要音频样本"
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
+                }
+            }
+
+            if (role.voiceModel == VoiceModel.MIMO_V2_5_TTS_VOICEDESIGN) {
+                Button(
+                    onClick = { onGenerateVoice(role) },
+                    enabled = !isGeneratingVoice,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (isGeneratingVoice) {
+                        LoadingIcon(
+                            Icons.Default.AutoAwesome,
+                            "正在生成音色",
+                            modifier = Modifier.size(18.dp),
+                            alternateImageVector = Icons.Default.GraphicEq
+                        )
+                    } else {
+                        Icon(Icons.Default.AutoAwesome, null, modifier = Modifier.size(18.dp))
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (isGeneratingVoice) "正在生成音色…" else "生成并保存音色")
+                }
+                OutlinedButton(
+                    onClick = { onPreviewVoice(role) },
+                    enabled = !isGeneratingVoice && !role.voiceSample.isNullOrBlank(),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (voiceState == com.example.mimochat.data.VoiceChatState.THINKING) {
+                        LoadingIcon(
+                            Icons.Default.VolumeUp,
+                            "等待语音返回",
+                            modifier = Modifier.size(18.dp),
+                            alternateImageVector = Icons.Default.GraphicEq
+                        )
+                    } else {
+                        Icon(Icons.Default.VolumeUp, null, modifier = Modifier.size(18.dp))
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (role.voiceGenerated) "试听已生成音色" else "试听已保存音色")
+                }
+            } else {
+                OutlinedButton(
+                    onClick = { onPreviewVoice(role) },
+                    enabled = !isGeneratingVoice && (role.voiceModel != VoiceModel.MIMO_V2_5_TTS_VOICECLONE || !role.voiceSample.isNullOrBlank()),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (voiceState == com.example.mimochat.data.VoiceChatState.THINKING) {
+                        LoadingIcon(
+                            Icons.Default.VolumeUp,
+                            "等待语音返回",
+                            modifier = Modifier.size(18.dp),
+                            alternateImageVector = Icons.Default.GraphicEq
+                        )
+                    } else {
+                        Icon(Icons.Default.VolumeUp, null, modifier = Modifier.size(18.dp))
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text("试听当前音色")
                 }
             }
 

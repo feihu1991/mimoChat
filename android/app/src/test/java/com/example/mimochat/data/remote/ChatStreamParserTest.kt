@@ -24,6 +24,31 @@ class ChatStreamParserTest {
     }
 
     @Test
+    fun `sse data without a space is parsed`() = runTest {
+        val chunks = ChatStreamParser.parseStream(
+            flowOf(
+                "event: message",
+                "data:{\"choices\":[{\"delta\":{\"content\":\"你好\"}}]}",
+                "data:[DONE]"
+            )
+        ).toList()
+
+        assertEquals("你好", chunks.filterIsInstance<StreamChunk.Delta>().single().text)
+        assertTrue(chunks.any { it is StreamChunk.Done })
+    }
+
+    @Test
+    fun `content parts are flattened`() = runTest {
+        val chunks = ChatStreamParser.parseStream(
+            flowOf(
+                "data: {\"choices\":[{\"delta\":{\"content\":[{\"type\":\"text\",\"text\":\"A\"},{\"type\":\"text\",\"text\":\"B\"}]}}]}"
+            )
+        ).toList()
+
+        assertEquals("AB", chunks.filterIsInstance<StreamChunk.Delta>().single().text)
+    }
+
+    @Test
     fun `done only emitted once`() = runTest {
         val lines = flowOf(
             """data: {"choices":[{"delta":{"content":"test"}}]}""",

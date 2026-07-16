@@ -20,7 +20,6 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.example.mimochat.BuildConfig
 import com.example.mimochat.core.workspace.GitHubWorkspaceConfig
-import com.example.mimochat.core.workspace.WorkspaceSyncState
 import com.example.mimochat.data.*
 import com.example.mimochat.data.update.AppUpdateManager
 import com.example.mimochat.data.update.AppUpdateState
@@ -31,7 +30,6 @@ import kotlinx.coroutines.launch
 fun SettingsScreen(
     connection: MimoConnection,
     workspaceConfig: GitHubWorkspaceConfig,
-    workspaceState: WorkspaceSyncState,
     theme: ThemeMode,
     roleCount: Int,
     onBack: () -> Unit,
@@ -40,13 +38,12 @@ fun SettingsScreen(
     onOpenConnection: () -> Unit,
     onSaveConnection: (MimoConnection) -> Unit,
     onClearApiKey: () -> Unit,
-    onSaveWorkspace: (GitHubWorkspaceConfig) -> Unit,
-    onSyncWorkspace: (GitHubWorkspaceConfig) -> Unit,
+    onSaveGitHubToken: (String) -> Unit,
     onClearGitHubToken: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showApiKeyDialog by remember { mutableStateOf(false) }
-    var showWorkspaceDialog by remember { mutableStateOf(false) }
+    var showGitHubTokenDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val updateManager = remember(context) { AppUpdateManager.getInstance(context) }
     val updateScope = rememberCoroutineScope()
@@ -94,9 +91,9 @@ fun SettingsScreen(
                     Icon(Icons.Default.Security, null, tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(12.dp))
                     Column {
-                        Text("本地 Agent 模式", fontWeight = FontWeight.SemiBold)
+                         Text("MiMo 对话模式", fontWeight = FontWeight.SemiBold)
                         Text(
-                            "对话和项目副本保存在本机；文件与 Git 操作必须经过结构化工具和确认",
+                            "默认是普通聊天。只有你明确要求处理 GitHub 代码时，才会使用 GitHub Token 和代码工具。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -124,21 +121,6 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            SectionHeader("代码工作区")
-            SettingsCard {
-                SettingsRow(
-                    icon = Icons.Default.FolderOpen,
-                    title = "GitHub 工作区",
-                    detail = workspaceDetail(workspaceConfig, workspaceState),
-                    onClick = { showWorkspaceDialog = true }
-                )
-                if (workspaceState is WorkspaceSyncState.Syncing) {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-
             SectionHeader("安全")
             SettingsCard {
                 SettingsRow(
@@ -151,7 +133,7 @@ fun SettingsScreen(
                     icon = Icons.Default.Hub,
                     title = "GitHub Token",
                     detail = if (workspaceConfig.token.isNotBlank()) "已加密保存" else "未设置",
-                    onClick = { showWorkspaceDialog = true }
+                    onClick = { showGitHubTokenDialog = true }
                 )
             }
 
@@ -183,7 +165,7 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column {
-                        Text("MiMo Code", fontWeight = FontWeight.Medium)
+                        Text("MiMo", fontWeight = FontWeight.Medium)
                         Text(
                             "Android 本地 Agent · ${BuildConfig.VERSION_NAME}",
                             style = MaterialTheme.typography.bodySmall,
@@ -278,53 +260,25 @@ fun SettingsScreen(
         )
     }
 
-    if (showWorkspaceDialog) {
-        var repository by remember { mutableStateOf(workspaceConfig.repository) }
-        var baseBranch by remember { mutableStateOf(workspaceConfig.baseBranch) }
+    if (showGitHubTokenDialog) {
         var token by remember { mutableStateOf(workspaceConfig.token) }
         var showToken by remember { mutableStateOf(false) }
 
-        fun formConfig() = GitHubWorkspaceConfig(
-            repository = repository.trim(),
-            baseBranch = baseBranch.trim().ifBlank { "master" },
-            token = token.trim(),
-            workingBranch = workspaceConfig.workingBranch
-        )
-
         AlertDialog(
-            onDismissRequest = { showWorkspaceDialog = false },
-            title = { Text("GitHub 工作区") },
+            onDismissRequest = { showGitHubTokenDialog = false },
+            title = { Text("GitHub Token") },
             text = {
-                Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        "项目会下载到 App 私有目录。Token 只由本地 GitHub 客户端使用，不会发送给 MiMo。",
+                        "普通聊天不会读取代码。只有你明确要求处理 GitHub 仓库时，才会使用这个 Token；仓库地址可以直接在聊天里告诉 MiMo。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    OutlinedTextField(
-                        value = repository,
-                        onValueChange = { repository = it.trim() },
-                        label = { Text("仓库") },
-                        placeholder = { Text("owner/repository") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = baseBranch,
-                        onValueChange = { baseBranch = it.trim() },
-                        label = { Text("基础分支") },
-                        placeholder = { Text("master") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
                     )
                     OutlinedTextField(
                         value = token,
                         onValueChange = { token = it.trim() },
                         label = { Text("Fine-grained Personal Access Token") },
-                        supportingText = { Text("需要目标仓库 Contents 读写和 Pull requests 读写权限") },
+                        supportingText = { Text("需要目标仓库 Contents 和 Pull requests 权限") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         visualTransformation = if (showToken) VisualTransformation.None else PasswordVisualTransformation(),
@@ -334,58 +288,30 @@ fun SettingsScreen(
                             }
                         }
                     )
-                    if (workspaceConfig.workingBranch.isNotBlank()) {
-                        Text(
-                            "当前工作分支：${workspaceConfig.workingBranch}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    if (workspaceState is WorkspaceSyncState.Error) {
-                        Text(
-                            workspaceState.message,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
-                    Row {
-                        TextButton(onClick = {
-                            onSaveWorkspace(formConfig())
-                            showWorkspaceDialog = false
-                        }) { Text("仅保存") }
-                        if (workspaceConfig.token.isNotBlank()) {
-                            TextButton(
-                                onClick = {
-                                    onClearGitHubToken()
-                                    token = ""
-                                },
-                                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                            ) { Text("清除 Token") }
-                        }
-                    }
                 }
             },
             confirmButton = {
-                TextButton(
-                    enabled = workspaceState !is WorkspaceSyncState.Syncing,
-                    onClick = {
-                        onSyncWorkspace(formConfig())
-                        showWorkspaceDialog = false
-                    }
-                ) { Text("保存并同步") }
+                TextButton(onClick = {
+                    onSaveGitHubToken(token)
+                    showGitHubTokenDialog = false
+                }) { Text("保存") }
             },
             dismissButton = {
-                TextButton(onClick = { showWorkspaceDialog = false }) { Text("取消") }
+                Row {
+                    if (workspaceConfig.token.isNotBlank()) {
+                        TextButton(
+                            onClick = {
+                                onClearGitHubToken()
+                                token = ""
+                            },
+                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                        ) { Text("清除") }
+                    }
+                    TextButton(onClick = { showGitHubTokenDialog = false }) { Text("取消") }
+                }
             }
         )
     }
-}
-
-private fun workspaceDetail(config: GitHubWorkspaceConfig, state: WorkspaceSyncState): String = when (state) {
-    WorkspaceSyncState.Idle -> if (config.repository.isBlank()) "未配置" else "${config.repository} · 待同步"
-    WorkspaceSyncState.Syncing -> "正在同步 ${config.repository}…"
-    is WorkspaceSyncState.Ready -> "${config.repository} · ${state.files} 个文件"
-    is WorkspaceSyncState.Error -> "同步失败 · ${state.message.take(32)}"
 }
 
 private fun updateDetail(state: AppUpdateState): String = when (state) {

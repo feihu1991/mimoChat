@@ -11,6 +11,9 @@ import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsChannel
+import io.ktor.client.statement.bodyAsText
+import io.ktor.client.statement.HttpResponse
+import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.utils.io.readUTF8Line
 import kotlinx.coroutines.Dispatchers
@@ -22,13 +25,14 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 
 /** OpenAI-compatible MiMo client dedicated to coding-agent tool calls. */
 object AgentMimoClient {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val client = HttpClient(OkHttp) {
-        expectSuccess = true
+        expectSuccess = false
         install(ContentNegotiation) { json(AgentMimoClient.json) }
         install(HttpTimeout) {
             connectTimeoutMillis = 30_000
@@ -63,6 +67,7 @@ object AgentMimoClient {
             setBody(body)
             timeout { requestTimeoutMillis = 180_000 }
         }
+        requireSuccess(response)
 
         val channel = response.bodyAsChannel()
         val lines = flow {
@@ -97,5 +102,15 @@ object AgentMimoClient {
                 })
             }
         }))
+    }
+
+    private suspend fun requireSuccess(response: HttpResponse) {
+        if (response.status.isSuccess()) return
+        val raw = runCatching { response.bodyAsText() }.getOrNull().orEmpty()
+        val detail = runCatching {
+            json.parseToJsonElement(raw).jsonObject["error"]?.jsonObject?.get("message")?.toString()
+        }.getOrNull()?.trim('"')
+            ?: raw.take(400).ifBlank { response.status.description }
+        throw IllegalStateException("HTTP ${response.status.value}: $detail")
     }
 }

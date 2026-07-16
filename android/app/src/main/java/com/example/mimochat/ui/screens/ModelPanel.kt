@@ -20,6 +20,7 @@ import com.example.mimochat.data.ModelId
 @Composable
 fun ModelPanel(
     model: ModelId,
+    availableModels: Set<String> = emptySet(),
     onClose: () -> Unit,
     onSelect: (ModelId) -> Unit
 ) {
@@ -52,7 +53,8 @@ fun ModelPanel(
                         icon = Icons.Default.AutoAwesome,
                         iconColor = Color(0xFFf06c3b),
                         title = ModelId.MIMO_V2_5.displayName,
-                        subtitle = "快速回答 · 文字、图片多模态理解",
+                        subtitle = modelAvailability(ModelId.MIMO_V2_5, availableModels, "快速回答 · 文字、图片多模态理解"),
+                        enabled = isModelAvailable(ModelId.MIMO_V2_5, availableModels),
                         onClick = { onSelect(ModelId.MIMO_V2_5) }
                     )
 
@@ -64,7 +66,8 @@ fun ModelPanel(
                         icon = Icons.Default.Psychology,
                         iconColor = Color(0xFF6750A4),
                         title = ModelId.MIMO_V2_5_PRO.displayName,
-                        subtitle = "深度回答 · 复杂推理与长任务",
+                        subtitle = modelAvailability(ModelId.MIMO_V2_5_PRO, availableModels, "深度回答 · 复杂推理与长任务"),
+                        enabled = isModelAvailable(ModelId.MIMO_V2_5_PRO, availableModels),
                         onClick = { onSelect(ModelId.MIMO_V2_5_PRO) }
                     )
 
@@ -82,10 +85,12 @@ private fun ModelOption(
     iconColor: Color,
     title: String,
     subtitle: String,
+    enabled: Boolean,
     onClick: () -> Unit
 ) {
     Surface(
         onClick = onClick,
+        enabled = enabled,
         shape = RoundedCornerShape(16.dp),
         color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
         modifier = Modifier.fillMaxWidth()
@@ -111,3 +116,9 @@ private fun ModelOption(
         }
     }
 }
+
+private fun isModelAvailable(model: ModelId, availableModels: Set<String>): Boolean =
+    availableModels.isEmpty() || model.apiName in availableModels
+
+private fun modelAvailability(model: ModelId, availableModels: Set<String>, normal: String): String =
+    if (isModelAvailable(model, availableModels)) normal else "当前 API Key 未开放此模型"
