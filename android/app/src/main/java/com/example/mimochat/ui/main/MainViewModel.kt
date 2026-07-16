@@ -5,11 +5,15 @@ import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.withTransaction
+import com.example.mimochat.core.agent.ApprovalManager
+import com.example.mimochat.core.workspace.GitHubWorkspace
+import com.example.mimochat.core.workspace.GitHubWorkspaceConfig
+import com.example.mimochat.core.workspace.WorkspaceSyncState
 import com.example.mimochat.data.*
 import com.example.mimochat.data.local.AppDatabase
 import com.example.mimochat.data.local.SettingsStorage
 import com.example.mimochat.data.remote.StreamChunk
-import com.example.mimochat.data.repository.ChatRepository
+import com.example.mimochat.data.repository.AgentRepository
 import com.example.mimochat.data.repository.ContextBuilder
 import com.example.mimochat.data.repository.ConversationRepository
 import java.util.UUID
@@ -26,14 +30,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val settingsStorage = SettingsStorage(application)
     private val contextBuilder = ContextBuilder(db.messageDao(), db.memoryDao())
     private val conversationRepo = ConversationRepository(db.conversationDao(), db.messageDao())
-    private val chatRepo = ChatRepository(db.messageDao(), contextBuilder, settingsStorage)
+    private val approvalManager = ApprovalManager()
+    private val workspace = GitHubWorkspace(application, settingsStorage)
+    private val chatRepo = AgentRepository(
+        db.messageDao(),
+        contextBuilder,
+        settingsStorage,
+        workspace,
+        approvalManager
+    )
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     companion object {
         private const val MAX_USER_MESSAGE_CHARS = 28_000
     }
 
-    // ── 生成任务管理 ──
     data class GenerationTask(
         val token: String,
         val conversationId: String,
@@ -45,7 +56,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var generationTask: GenerationTask? = null
     private val generationMutex = Mutex()
 
-    // ── UI State ──
     private val _screen = MutableStateFlow(Screen.CHAT)
     val screen: StateFlow<Screen> = _screen.asStateFlow()
 
@@ -73,7 +83,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isStreaming = MutableStateFlow(false)
     val isStreaming: StateFlow<Boolean> = _isStreaming.asStateFlow()
 
-    // ── Data Flows ──
+    val pendingApproval = approvalManager.pending
+
+    private val _workspaceConfig = MutableStateFlow(settingsStorage.loadWorkspaceConfig())
+    val workspaceConfig: StateFlow<GitHubWorkspaceConfig> = _workspaceConfig.asStateFlow()
+
+    private val _workspaceSyncState = MutableStateFlow<WorkspaceSyncState>(WorkspaceSyncState.Idle)
+    val workspaceSyncState: StateFlow<WorkspaceSyncState> = _workspaceSyncState.asStateFlow()
+
     val conversations: StateFlow<List<ConversationEntity>> =
         conversationRepo.getAllConversationsFlow()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -119,7 +136,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── Theme ──
     private fun loadTheme(): ThemeMode = when (settingsStorage.theme) {
         "light" -> ThemeMode.LIGHT
         "dark" -> ThemeMode.DARK
@@ -141,7 +157,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── Roles ──
     private fun loadRoles(): List<Role> {
         val rolesJson = settingsStorage.rolesJson
         if (rolesJson.isBlank()) return DEFAULT_ROLES
@@ -167,12 +182,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         settingsStorage.defaultRoleId = id
     }
 
-    // ── Navigation ──
     fun setScreen(screen: Screen) { _screen.value = screen }
     fun setDrawerOpen(open: Boolean) { _drawerOpen.value = open }
     fun setModelOpen(open: Boolean) { _modelOpen.value = open }
 
-    // ── Conversation Management ──
     fun selectConversation(id: String) {
         _conversationId.value = id
     }
@@ -211,7 +224,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── Model ──
     fun setModel(model: ModelId) {
         val convId = _conversationId.value ?: return
         viewModelScope.launch {
@@ -222,7 +234,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── Chat: Send Message ──
     fun sendMessage(text: String) {
         val clean = validateMessage(text) ?: return
         val convId = _conversationId.value ?: return
@@ -284,7 +295,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return active
     }
 
-    // 调用方必须持有 generationMutex。
     private fun startGenerationLocked(
         conversationId: String,
         userMessageId: String,
@@ -329,8 +339,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         job.start()
     }
 
-    // ── Stop Generation ──
     fun stopGeneration() {
+        approvalManager.cancelPending()
         viewModelScope.launch {
             val task = generationMutex.withLock {
                 val current = generationTask ?: return@withLock null
@@ -352,6 +362,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun cancelGeneration(conversationId: String? = null) {
+        approvalManager.cancelPending()
         val task = generationMutex.withLock {
             val current = generationTask ?: return@withLock null
             if (conversationId != null && current.conversationId != conversationId) return@withLock null
@@ -362,7 +373,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         task.job.cancelAndJoin()
     }
 
-    // ── Retry ──
     fun retryMessage(messageId: String) {
         val convId = _conversationId.value ?: return
 
@@ -405,7 +415,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── Regenerate ──
     fun regenerateMessage(messageId: String) {
         val convId = _conversationId.value ?: return
 
@@ -446,7 +455,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── Edit & Resend ──
     fun editAndResend(messageId: String, newText: String) {
         val convId = _conversationId.value ?: return
         val cleanText = validateMessage(newText) ?: return
@@ -484,7 +492,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── Copy ──
     fun copyMessage(text: String) {
         val clipboard = getApplication<Application>().getSystemService(Context.CLIPBOARD_SERVICE)
             as android.content.ClipboardManager
@@ -492,13 +499,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         showToast("已复制到剪贴板")
     }
 
-    // ── Touch Conversation ──
     private suspend fun touchConversation(conversationId: String) {
         val conv = conversationRepo.getConversation(conversationId) ?: return
         db.conversationDao().update(conv.copy(updatedAt = System.currentTimeMillis()))
     }
 
-    // ── Connection ──
     private val _connectionPhase = MutableStateFlow(ConnectionPhase.IDLE)
     val connectionPhase: StateFlow<ConnectionPhase> = _connectionPhase.asStateFlow()
 
@@ -511,6 +516,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun loadConnection(): MimoConnection = settingsStorage.loadConnection()
     fun saveConnection(connection: MimoConnection) { settingsStorage.saveConnection(connection) }
     fun clearApiKey() { settingsStorage.clearApiKey() }
+
+    fun saveWorkspaceConfig(config: GitHubWorkspaceConfig) {
+        settingsStorage.saveWorkspaceConfig(config)
+        _workspaceConfig.value = config
+    }
+
+    fun syncWorkspace(config: GitHubWorkspaceConfig) {
+        saveWorkspaceConfig(config)
+        if (!config.isConfigured) {
+            _workspaceSyncState.value = WorkspaceSyncState.Error("请填写 owner/repository、基础分支和 GitHub Token")
+            return
+        }
+        _workspaceSyncState.value = WorkspaceSyncState.Syncing
+        viewModelScope.launch {
+            try {
+                val ready = workspace.sync(config)
+                _workspaceConfig.value = settingsStorage.loadWorkspaceConfig()
+                _workspaceSyncState.value = ready
+                showToast("工作区已同步 ${ready.files} 个文件")
+            } catch (e: Exception) {
+                val message = e.message ?: "同步工作区失败"
+                _workspaceSyncState.value = WorkspaceSyncState.Error(message)
+                showToast(message)
+            }
+        }
+    }
+
+    fun clearGitHubToken() {
+        settingsStorage.clearGitHubToken()
+        _workspaceConfig.value = settingsStorage.loadWorkspaceConfig()
+    }
+
+    fun approveAgentAction() = approvalManager.approve()
+    fun denyAgentAction() = approvalManager.deny()
 
     fun connect() {
         val config = settingsStorage.loadConnection()
@@ -543,7 +582,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── Toast ──
     fun showToast(message: String) {
         _toast.value = message.take(80)
         viewModelScope.launch {
@@ -552,9 +590,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── Memory ──
     fun getMemories() = db.memoryDao().getAllFlow()
     fun addMemory(content: String) { viewModelScope.launch { db.memoryDao().upsert(MemoryEntity(content = content)) } }
     fun deleteMemory(id: String) { viewModelScope.launch { db.memoryDao().deleteById(id) } }
     fun toggleMemory(id: String, enabled: Boolean) { viewModelScope.launch { db.memoryDao().setEnabled(id, enabled) } }
+
+    override fun onCleared() {
+        approvalManager.cancelPending()
+        super.onCleared()
+    }
 }
