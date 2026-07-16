@@ -4,15 +4,13 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.example.mimochat.core.workspace.GitHubWorkspaceConfig
 import com.example.mimochat.data.AuthMode
 import com.example.mimochat.data.MimoConnection
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
-/**
- * 安全配置存储 - 使用 EncryptedSharedPreferences
- * API Key 等敏感信息加密存储
- */
+/** Sensitive model and GitHub credentials are stored with EncryptedSharedPreferences. */
 class SettingsStorage(context: Context) {
     private val masterKey = MasterKey.Builder(context)
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -31,8 +29,6 @@ class SettingsStorage(context: Context) {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    // ── Connection (secure) ──
-
     fun saveConnection(connection: MimoConnection) {
         securePrefs.edit()
             .putString(KEY_BASE_URL, connection.baseUrl)
@@ -41,15 +37,16 @@ class SettingsStorage(context: Context) {
             .apply()
     }
 
-    fun loadConnection(): MimoConnection {
-        return MimoConnection(
-            baseUrl = securePrefs.getString(KEY_BASE_URL, "https://api.xiaomimimo.com/v1") ?: "https://api.xiaomimimo.com/v1",
-            apiKey = securePrefs.getString(KEY_API_KEY, "") ?: "",
-            authMode = try {
-                AuthMode.valueOf(securePrefs.getString(KEY_AUTH_MODE, "API_KEY") ?: "API_KEY")
-            } catch (_: Exception) { AuthMode.API_KEY }
-        )
-    }
+    fun loadConnection(): MimoConnection = MimoConnection(
+        baseUrl = securePrefs.getString(KEY_BASE_URL, "https://api.xiaomimimo.com/v1")
+            ?: "https://api.xiaomimimo.com/v1",
+        apiKey = securePrefs.getString(KEY_API_KEY, "") ?: "",
+        authMode = try {
+            AuthMode.valueOf(securePrefs.getString(KEY_AUTH_MODE, "API_KEY") ?: "API_KEY")
+        } catch (_: Exception) {
+            AuthMode.API_KEY
+        }
+    )
 
     fun clearApiKey() {
         securePrefs.edit().remove(KEY_API_KEY).apply()
@@ -57,7 +54,25 @@ class SettingsStorage(context: Context) {
 
     fun hasApiKey(): Boolean = !securePrefs.getString(KEY_API_KEY, "").isNullOrBlank()
 
-    // ── Preferences (non-secure) ──
+    fun saveWorkspaceConfig(config: GitHubWorkspaceConfig) {
+        securePrefs.edit()
+            .putString(KEY_GITHUB_REPOSITORY, config.repository.trim())
+            .putString(KEY_GITHUB_BASE_BRANCH, config.baseBranch.trim())
+            .putString(KEY_GITHUB_TOKEN, config.token.trim())
+            .putString(KEY_GITHUB_WORKING_BRANCH, config.workingBranch.trim())
+            .apply()
+    }
+
+    fun loadWorkspaceConfig(): GitHubWorkspaceConfig = GitHubWorkspaceConfig(
+        repository = securePrefs.getString(KEY_GITHUB_REPOSITORY, "") ?: "",
+        baseBranch = securePrefs.getString(KEY_GITHUB_BASE_BRANCH, "master") ?: "master",
+        token = securePrefs.getString(KEY_GITHUB_TOKEN, "") ?: "",
+        workingBranch = securePrefs.getString(KEY_GITHUB_WORKING_BRANCH, "") ?: ""
+    )
+
+    fun clearGitHubToken() {
+        securePrefs.edit().remove(KEY_GITHUB_TOKEN).apply()
+    }
 
     var theme: String
         get() = prefs.getString("theme", "system") ?: "system"
@@ -75,5 +90,9 @@ class SettingsStorage(context: Context) {
         private const val KEY_BASE_URL = "base_url"
         private const val KEY_API_KEY = "api_key"
         private const val KEY_AUTH_MODE = "auth_mode"
+        private const val KEY_GITHUB_REPOSITORY = "github_repository"
+        private const val KEY_GITHUB_BASE_BRANCH = "github_base_branch"
+        private const val KEY_GITHUB_TOKEN = "github_token"
+        private const val KEY_GITHUB_WORKING_BRANCH = "github_working_branch"
     }
 }
