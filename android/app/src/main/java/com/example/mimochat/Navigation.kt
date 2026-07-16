@@ -1,11 +1,15 @@
 package com.example.mimochat
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.mimochat.data.*
@@ -24,19 +28,25 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val toast by viewModel.toast.collectAsState()
     val theme by viewModel.theme.collectAsState()
     val roles by viewModel.roles.collectAsState()
+    val workspaceConfig by viewModel.workspaceConfig.collectAsState()
+    val workspaceState by viewModel.workspaceSyncState.collectAsState()
+    val pendingApproval by viewModel.pendingApproval.collectAsState()
 
-    // input 由 ChatScreen 内部管理
     var input by remember { mutableStateOf("") }
 
     val currentConversation = conversations.find { it.id == conversationId }
-    val activeRole = roles.find { it.id == currentConversation?.roleId } ?: roles.firstOrNull() ?: DEFAULT_ROLES[0]
-    val currentModel = currentConversation?.model?.let { ModelId.fromApiName(it) } ?: ModelId.MIMO_V2_5
+    val activeRole = roles.find { it.id == currentConversation?.roleId }
+        ?: roles.firstOrNull()
+        ?: DEFAULT_ROLES[0]
+    val currentModel = currentConversation?.model?.let { ModelId.fromApiName(it) }
+        ?: ModelId.MIMO_V2_5
 
     Box(modifier = Modifier.fillMaxSize()) {
         when (screen) {
             Screen.CHAT -> {
                 ChatScreen(
                     messages = messages,
+                    conversationTitle = currentConversation?.title ?: "新对话",
                     role = activeRole,
                     model = currentModel,
                     input = input,
@@ -62,6 +72,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             Screen.SETTINGS -> {
                 SettingsScreen(
                     connection = viewModel.loadConnection(),
+                    workspaceConfig = workspaceConfig,
+                    workspaceState = workspaceState,
                     theme = theme,
                     roleCount = roles.size,
                     onBack = { viewModel.setScreen(Screen.CHAT) },
@@ -69,7 +81,10 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     onOpenRoles = { viewModel.setScreen(Screen.ROLES) },
                     onOpenConnection = { viewModel.setScreen(Screen.CONNECTION) },
                     onSaveConnection = { viewModel.saveConnection(it) },
-                    onClearApiKey = { viewModel.clearApiKey() }
+                    onClearApiKey = { viewModel.clearApiKey() },
+                    onSaveWorkspace = { viewModel.saveWorkspaceConfig(it) },
+                    onSyncWorkspace = { viewModel.syncWorkspace(it) },
+                    onClearGitHubToken = { viewModel.clearGitHubToken() }
                 )
             }
             Screen.CONNECTION -> {
@@ -106,7 +121,6 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             }
         }
 
-        // History drawer
         if (drawerOpen) {
             HistoryDrawer(
                 conversations = conversations,
@@ -114,23 +128,30 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 currentId = conversationId,
                 onClose = { viewModel.setDrawerOpen(false) },
                 onNew = { viewModel.startNewConversation(); input = "" },
-                onSelect = { id -> viewModel.selectConversation(id); viewModel.setDrawerOpen(false) },
-                onSettings = { viewModel.setDrawerOpen(false); viewModel.setScreen(Screen.SETTINGS) },
+                onSelect = { id ->
+                    viewModel.selectConversation(id)
+                    viewModel.setDrawerOpen(false)
+                },
+                onSettings = {
+                    viewModel.setDrawerOpen(false)
+                    viewModel.setScreen(Screen.SETTINGS)
+                },
                 onRename = { id, title -> viewModel.renameConversation(id, title) },
                 onDelete = { id -> viewModel.deleteConversation(id) }
             )
         }
 
-        // Model panel
         if (modelOpen) {
             ModelPanel(
                 model = currentModel,
                 onClose = { viewModel.setModelOpen(false) },
-                onSelect = { viewModel.setModel(it); viewModel.setModelOpen(false) }
+                onSelect = {
+                    viewModel.setModel(it)
+                    viewModel.setModelOpen(false)
+                }
             )
         }
 
-        // Toast
         if (toast.isNotBlank()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
                 Surface(
@@ -146,5 +167,49 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 }
             }
         }
+    }
+
+    pendingApproval?.let { approval ->
+        AlertDialog(
+            onDismissRequest = { viewModel.denyAgentAction() },
+            title = { Text(approval.title) },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 520.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(approval.description, style = MaterialTheme.typography.bodyMedium)
+                    if (approval.diff.isNotBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            SelectionContainer {
+                                Text(
+                                    approval.diff.take(40_000),
+                                    modifier = Modifier.padding(12.dp),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        "Token 不会发送给模型；拒绝后 Agent 会收到 DENIED 工具结果。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = { viewModel.approveAgentAction() }) { Text("允许本次") }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.denyAgentAction() }) { Text("拒绝") }
+            }
+        )
     }
 }
