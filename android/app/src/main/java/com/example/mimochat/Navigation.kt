@@ -1,11 +1,15 @@
 package com.example.mimochat
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.mimochat.data.*
@@ -24,6 +28,9 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val toast by viewModel.toast.collectAsState()
     val theme by viewModel.theme.collectAsState()
     val roles by viewModel.roles.collectAsState()
+    val workspaceConfig by viewModel.workspaceConfig.collectAsState()
+    val workspaceState by viewModel.workspaceSyncState.collectAsState()
+    val pendingApproval by viewModel.pendingApproval.collectAsState()
 
     var input by remember { mutableStateOf("") }
 
@@ -65,6 +72,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             Screen.SETTINGS -> {
                 SettingsScreen(
                     connection = viewModel.loadConnection(),
+                    workspaceConfig = workspaceConfig,
+                    workspaceState = workspaceState,
                     theme = theme,
                     roleCount = roles.size,
                     onBack = { viewModel.setScreen(Screen.CHAT) },
@@ -72,7 +81,10 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     onOpenRoles = { viewModel.setScreen(Screen.ROLES) },
                     onOpenConnection = { viewModel.setScreen(Screen.CONNECTION) },
                     onSaveConnection = { viewModel.saveConnection(it) },
-                    onClearApiKey = { viewModel.clearApiKey() }
+                    onClearApiKey = { viewModel.clearApiKey() },
+                    onSaveWorkspace = { viewModel.saveWorkspaceConfig(it) },
+                    onSyncWorkspace = { viewModel.syncWorkspace(it) },
+                    onClearGitHubToken = { viewModel.clearGitHubToken() }
                 )
             }
             Screen.CONNECTION -> {
@@ -155,5 +167,49 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 }
             }
         }
+    }
+
+    pendingApproval?.let { approval ->
+        AlertDialog(
+            onDismissRequest = { viewModel.denyAgentAction() },
+            title = { Text(approval.title) },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 520.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(approval.description, style = MaterialTheme.typography.bodyMedium)
+                    if (approval.diff.isNotBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            SelectionContainer {
+                                Text(
+                                    approval.diff.take(40_000),
+                                    modifier = Modifier.padding(12.dp),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        "Token 不会发送给模型；拒绝后 Agent 会收到 DENIED 工具结果。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = { viewModel.approveAgentAction() }) { Text("允许本次") }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.denyAgentAction() }) { Text("拒绝") }
+            }
+        )
     }
 }
