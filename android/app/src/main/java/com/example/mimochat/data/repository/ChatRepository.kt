@@ -15,9 +15,7 @@ import kotlinx.coroutines.withContext
 
 private class StreamTerminatedException : RuntimeException()
 
-/**
- * 聊天仓库 - 流式生成 + DB 写入节流。
- */
+/** Legacy plain-chat repository retained for non-agent callers. */
 class ChatRepository(
     private val messageDao: MessageDao,
     private val contextBuilder: ContextBuilder,
@@ -114,11 +112,12 @@ class ChatRepository(
                             messageDao.updateStatus(assistantMessageId, MessageStatus.FAILED, chunk.message)
                         }
                         emit(chunk)
-                        // Error 是终态，不能再让后续 Delta/Done 把 FAILED 改回成功。
                         throw StreamTerminatedException()
                     }
                     is StreamChunk.Role -> emit(chunk)
                     is StreamChunk.Finished -> emit(chunk)
+                    is StreamChunk.ReasoningDelta -> Unit
+                    is StreamChunk.ToolCallDelta -> Unit
                 }
             }
 
@@ -144,7 +143,7 @@ class ChatRepository(
                 emit(StreamChunk.Done)
             }
         } catch (_: StreamTerminatedException) {
-            // 错误已经写入并向上游发出，正常结束当前 Flow。
+            Unit
         } catch (e: CancellationException) {
             withContext(NonCancellable + Dispatchers.IO) {
                 val current = messageDao.getById(assistantMessageId)
