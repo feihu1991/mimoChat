@@ -4,6 +4,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
@@ -25,18 +28,19 @@ object ChatStreamParser {
 
         lineFlow.collect { rawLine ->
             val line = rawLine.trim()
-            if (line.isEmpty() || line.startsWith(":")) return@collect
+            if (line.isEmpty() || line.startsWith(":") || line.startsWith("event:") || line.startsWith("id:")) {
+                return@collect
+            }
 
-            if (line == "data: [DONE]") {
+            val data = if (line.startsWith("data:")) line.removePrefix("data:").trimStart() else line
+            if (data.isBlank()) return@collect
+            if (data == "[DONE]") {
                 if (!receivedDone) {
                     receivedDone = true
                     emit(StreamChunk.Done)
                 }
                 return@collect
             }
-
-            val data = if (line.startsWith("data: ")) line.removePrefix("data: ") else line
-            if (data.isBlank()) return@collect
 
             try {
                 val jsonObj = json.parseToJsonElement(data) as? JsonObject ?: return@collect
@@ -75,7 +79,7 @@ object ChatStreamParser {
             delta["reasoning_content"]?.jsonPrimitive?.contentOrNull
                 ?.takeIf { it.isNotEmpty() }
                 ?.let { events += StreamChunk.ReasoningDelta(it) }
-            delta["content"]?.jsonPrimitive?.contentOrNull
+            textContent(delta["content"])
                 ?.takeIf { it.isNotEmpty() }
                 ?.let { events += StreamChunk.Delta(it) }
 
@@ -93,7 +97,7 @@ object ChatStreamParser {
 
         val message = choice["message"]?.jsonObject
         if (message != null) {
-            message["content"]?.jsonPrimitive?.contentOrNull
+            textContent(message["content"])
                 ?.takeIf { it.isNotEmpty() }
                 ?.let { events += StreamChunk.Complete(it) }
             message["tool_calls"]?.jsonArray?.forEachIndexed { index, element ->
@@ -112,6 +116,17 @@ object ChatStreamParser {
             events += StreamChunk.Finished(it)
         }
         return events
+    }
+
+    private fun textContent(element: JsonElement?): String? = when (element) {
+        null -> null
+        is JsonArray -> element.mapNotNull { part ->
+            val obj = part as? JsonObject
+            textContent(obj?.get("text") ?: part)
+        }.joinToString("").ifEmpty { null }
+        is JsonPrimitive -> element.contentOrNull
+        is JsonObject -> textContent(element["text"] ?: element["content"])
+        else -> null
     }
 }
 

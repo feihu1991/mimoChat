@@ -19,6 +19,8 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 private class AgentStreamException(message: String) : RuntimeException(message)
@@ -66,21 +68,29 @@ class AgentRepository(
             contextBuilder.build(conversationId, systemPrompt, userMessageId)
         }
         val messages = context.map(::toJsonMessage).toMutableList()
-        messages.add(
-            0,
-            AgentMimoClient.textMessage(
-                "system",
-                """
-                You are MiMo Code running inside an Android application. You can inspect and change the configured
-                app-private project workspace only through the provided structured tools. Never claim that you read,
+        val agentInstructions = """
+                You are MiMo, a conversational assistant running inside an Android application. Only when the user
+                explicitly asks for GitHub/codebase work may you inspect and change the configured app-private project
+                workspace through the provided structured tools. Never claim that you read,
                 changed, committed, pushed, or opened a pull request unless the corresponding tool result confirms it.
                 Prefer list_files/grep_files/read_file before editing. Use edit_file for precise changes and write_file
                 for new files or complete rewrites. File writes, deletes, branches, pushes, and pull requests require
                 explicit user approval in the Android UI. Do not request build, packaging, deployment, arbitrary shell,
-                or binary execution. When the user's requested coding task is complete, summarize files changed and Git state.
+                or binary execution. For normal questions, answer conversationally without calling tools.
+                When a coding task is complete, summarize files changed and Git state.
                 """.trimIndent()
+        val systemIndex = messages.indexOfFirst {
+            it["role"]?.jsonPrimitive?.contentOrNull == "system"
+        }
+        if (systemIndex >= 0) {
+            val existing = messages[systemIndex]["content"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            messages[systemIndex] = AgentMimoClient.textMessage(
+                "system",
+                "$agentInstructions\n\n$existing"
             )
-        )
+        } else {
+            messages.add(0, AgentMimoClient.textMessage("system", agentInstructions))
+        }
 
         val visible = StringBuilder()
         var lastWriteTime = 0L
@@ -152,11 +162,7 @@ class AgentRepository(
                     return@repeat
                 }
 
-                messages += AgentMimoClient.assistantToolMessage(
-                    text = stepText.toString(),
-                    calls = finalizedCalls.map { Triple(it.id, it.name, it.argumentsJson) }
-                )
-
+                val toolSummary = StringBuilder("工具执行结果（请基于这些结果继续回答；不要假设未返回的内容）：\n")
                 for (call in finalizedCalls) {
                     val started = "\n\n> 🔧 ${call.name}"
                     visible.append(started)
@@ -169,12 +175,12 @@ class AgentRepository(
                     visible.append(displayLine)
                     emit(StreamChunk.Delta(displayLine))
                     persist(force = true)
-
-                    messages += AgentMimoClient.toolResultMessage(
-                        callId = result.callId,
-                        content = result.content.take(80_000)
-                    )
+                    toolSummary.append("\n- ${call.name}: ")
+                        .append(result.content.take(80_000))
                 }
+                // MiMo API 对 assistant.tool_calls + role=tool 的多轮历史校验较严格。
+                // 用普通 user 消息承载本地工具结果，保持 Android Agent 在多轮执行时兼容。
+                messages += AgentMimoClient.textMessage("user", toolSummary.toString())
 
                 if (step == MAX_AGENT_STEPS - 1) {
                     throw AgentStreamException("Agent 达到最大执行步数，已停止以避免循环")

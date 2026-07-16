@@ -28,11 +28,11 @@ fun HistoryDrawer(
     roles: List<Role>,
     currentId: String?,
     onClose: () -> Unit,
-    onNew: () -> Unit,
     onSelect: (String) -> Unit,
     onSettings: () -> Unit,
     onRename: (String, String) -> Unit,
-    onDelete: (String) -> Unit
+    onDelete: (String) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var editingId by remember { mutableStateOf<String?>(null) }
@@ -46,7 +46,7 @@ fun HistoryDrawer(
     }
 
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxHeight()
             .width(320.dp),
         color = MaterialTheme.colorScheme.surface,
@@ -72,12 +72,12 @@ fun HistoryDrawer(
                 Spacer(Modifier.width(11.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "MiMo Code",
+                        "MiMo",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        "本地会话 · 专注代码协作",
+                        "本地会话",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -85,23 +85,6 @@ fun HistoryDrawer(
                 IconButton(onClick = onClose) {
                     Icon(Icons.Default.Close, contentDescription = "关闭")
                 }
-            }
-
-            Spacer(Modifier.height(14.dp))
-            OutlinedButton(
-                onClick = onNew,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                shape = RoundedCornerShape(13.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = MaterialTheme.colorScheme.onSurface
-                )
-            ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("新建对话", fontWeight = FontWeight.Medium)
             }
 
             OutlinedTextField(

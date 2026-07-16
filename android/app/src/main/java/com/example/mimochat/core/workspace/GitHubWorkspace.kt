@@ -110,6 +110,12 @@ class GitHubWorkspace(
             "png", "jpg", "jpeg", "gif", "webp", "ico", "pdf", "zip", "gz", "jar", "aar",
             "apk", "aab", "so", "dll", "exe", "class", "woff", "woff2", "ttf", "mp3", "wav", "mp4"
         )
+        private val SENSITIVE_EXTENSIONS = setOf(
+            "pem", "key", "p12", "pfx", "jks", "keystore", "der", "crt", "cer", "asc", "gpg"
+        )
+        private val SENSITIVE_FILE_NAMES = setOf(
+            "credentials", "credentials.json", "secrets", "secrets.json", "service-account.json"
+        )
     }
 
     private val root = File(context.filesDir, "mimo-code-workspace")
@@ -124,6 +130,11 @@ class GitHubWorkspace(
     suspend fun sync(config: GitHubWorkspaceConfig): WorkspaceSyncState.Ready = withContext(Dispatchers.IO) {
         require(config.isConfigured) { "请先配置 GitHub 仓库、分支和 Token" }
         validateRepository(config.repository)
+        if (isReady()) {
+            require(status().isEmpty() && sensitiveProjectFiles().isEmpty()) {
+                "工作区有未提交修改，请先提交并推送或手动清理后再同步"
+            }
+        }
 
         val baseCommit = api.getRefSha(config.repository, config.baseBranch, config.token)
         val treeSha = api.getCommitTreeSha(config.repository, baseCommit, config.token)
@@ -165,6 +176,12 @@ class GitHubWorkspace(
 
     fun isReady(): Boolean = manifestFile.isFile
 
+    fun isReadyFor(config: GitHubWorkspaceConfig): Boolean =
+        isReady() && runCatching {
+            val manifest = loadManifest()
+            manifest.repository == config.repository && manifest.baseBranch == config.baseBranch
+        }.getOrDefault(false)
+
     fun listFiles(pattern: String? = null, limit: Int = 300): List<String> {
         ensureReady()
         val regex = pattern?.takeIf { it.isNotBlank() }?.let(::globToRegex)
@@ -173,6 +190,7 @@ class GitHubWorkspace(
             .filter { it.isFile }
             .filterNot { it.canonicalPath.startsWith(metaPrefix) }
             .map { it.relativeTo(root).invariantSeparatorsPath }
+            .filterNot(::isSensitivePath)
             .filter { regex == null || regex.matches(it) }
             .sorted()
             .take(limit.coerceIn(1, 1000))
@@ -181,7 +199,7 @@ class GitHubWorkspace(
 
     fun readFile(path: String, startLine: Int = 1, endLine: Int? = null): String {
         ensureReady()
-        val file = resolveProjectPath(path)
+        val file = resolveProjectPath(requireAgentPath(path))
         require(file.isFile) { "文件不存在：$path" }
         require(file.length() <= MAX_FILE_BYTES) { "文件过大，无法直接读取：$path" }
         val lines = file.readLines()
@@ -216,10 +234,11 @@ class GitHubWorkspace(
     fun previewWrite(path: String, content: String): WorkspaceChange {
         ensureReady()
         require(content.length <= MAX_READ_CHARS * 4) { "写入内容过大" }
-        val file = resolveProjectPath(path)
+        val safePath = requireAgentPath(path)
+        val file = resolveProjectPath(safePath)
         val old = if (file.isFile) file.readText() else ""
         return WorkspaceChange(
-            path = normalizeRelativePath(path),
+            path = safePath,
             type = if (file.exists()) WorkspaceChange.ChangeType.MODIFIED else WorkspaceChange.ChangeType.ADDED,
             oldContent = old,
             newContent = content
@@ -228,14 +247,15 @@ class GitHubWorkspace(
 
     fun previewEdit(path: String, oldText: String, newText: String): WorkspaceChange {
         require(oldText.isNotEmpty()) { "old_text 不能为空" }
-        val file = resolveProjectPath(path)
+        val safePath = requireAgentPath(path)
+        val file = resolveProjectPath(safePath)
         require(file.isFile) { "文件不存在：$path" }
         val content = file.readText()
         val first = content.indexOf(oldText)
         require(first >= 0) { "未找到要替换的原文" }
         require(content.indexOf(oldText, first + oldText.length) < 0) { "原文匹配多次，请提供更精确的上下文" }
         return WorkspaceChange(
-            path = normalizeRelativePath(path),
+            path = safePath,
             type = WorkspaceChange.ChangeType.MODIFIED,
             oldContent = content,
             newContent = content.replaceFirst(oldText, newText)
@@ -243,10 +263,11 @@ class GitHubWorkspace(
     }
 
     fun previewDelete(path: String): WorkspaceChange {
-        val file = resolveProjectPath(path)
+        val safePath = requireAgentPath(path)
+        val file = resolveProjectPath(safePath)
         require(file.isFile) { "文件不存在：$path" }
         return WorkspaceChange(
-            path = normalizeRelativePath(path),
+            path = safePath,
             type = WorkspaceChange.ChangeType.DELETED,
             oldContent = file.readText(),
             newContent = ""
@@ -391,6 +412,21 @@ class GitHubWorkspace(
         require(isReady()) { "工作区尚未同步，请先在设置中配置并同步 GitHub 仓库" }
     }
 
+    private fun requireAgentPath(path: String): String {
+        val normalized = normalizeRelativePath(path)
+        require(!isSensitivePath(normalized)) { "出于安全原因，禁止访问敏感文件：$path" }
+        return normalized
+    }
+
+    private fun sensitiveProjectFiles(): List<String> {
+        val metaPrefix = metaRoot.canonicalPath + File.separator
+        return root.walkTopDown()
+            .filter { it.isFile && !it.canonicalPath.startsWith(metaPrefix) }
+            .map { it.relativeTo(root).invariantSeparatorsPath }
+            .filter(::isSensitivePath)
+            .toList()
+    }
+
     private fun loadManifest(): WorkspaceManifest =
         json.decodeFromString(manifestFile.readText())
 
@@ -438,7 +474,19 @@ class GitHubWorkspace(
     private fun isIgnored(path: String): Boolean {
         val segments = path.split('/')
         val ext = path.substringAfterLast('.', "").lowercase()
-        return segments.any { it in IGNORED_DIRECTORIES } || ext in BINARY_EXTENSIONS || path.startsWith(".mimo/")
+        return segments.any { it in IGNORED_DIRECTORIES } ||
+            ext in BINARY_EXTENSIONS ||
+            path.startsWith(".mimo/") ||
+            isSensitivePath(path)
+    }
+
+    private fun isSensitivePath(path: String): Boolean {
+        val fileName = path.substringAfterLast('/').lowercase()
+        val ext = fileName.substringAfterLast('.', "")
+        return fileName == ".env" || fileName.startsWith(".env.") ||
+            fileName in SENSITIVE_FILE_NAMES ||
+            fileName.startsWith("id_rsa") ||
+            ext in SENSITIVE_EXTENSIONS
     }
 
     private fun globToRegex(glob: String): Regex {

@@ -2,6 +2,7 @@ package com.example.mimochat.ui.main
 
 import android.app.Application
 import android.content.Context
+import android.media.MediaPlayer
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.withTransaction
@@ -12,11 +13,17 @@ import com.example.mimochat.core.workspace.WorkspaceSyncState
 import com.example.mimochat.data.*
 import com.example.mimochat.data.local.AppDatabase
 import com.example.mimochat.data.local.SettingsStorage
+import com.example.mimochat.data.audio.VoiceRecorder
+import com.example.mimochat.data.audio.VoiceSampleStore
+import com.example.mimochat.data.remote.MimoClient
 import com.example.mimochat.data.remote.StreamChunk
 import com.example.mimochat.data.repository.AgentRepository
+import com.example.mimochat.data.repository.ChatRepository
 import com.example.mimochat.data.repository.ContextBuilder
 import com.example.mimochat.data.repository.ConversationRepository
 import java.util.UUID
+import android.util.Base64
+import java.io.File
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
@@ -32,14 +39,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val conversationRepo = ConversationRepository(db.conversationDao(), db.messageDao())
     private val approvalManager = ApprovalManager()
     private val workspace = GitHubWorkspace(application, settingsStorage)
-    private val chatRepo = AgentRepository(
+    private val agentRepo = AgentRepository(
         db.messageDao(),
         contextBuilder,
         settingsStorage,
         workspace,
         approvalManager
     )
+    private val chatRepo = ChatRepository(db.messageDao(), contextBuilder, settingsStorage)
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    private val voiceRecorder = VoiceRecorder(application)
+    private val voiceSampleStore = VoiceSampleStore(application)
+    private var mediaPlayer: MediaPlayer? = null
+    private var mediaFile: File? = null
 
     companion object {
         private const val MAX_USER_MESSAGE_CHARS = 28_000
@@ -58,12 +70,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _screen = MutableStateFlow(Screen.CHAT)
     val screen: StateFlow<Screen> = _screen.asStateFlow()
+    private val screenBackStack = ArrayDeque<Screen>()
 
     private val _drawerOpen = MutableStateFlow(false)
     val drawerOpen: StateFlow<Boolean> = _drawerOpen.asStateFlow()
 
     private val _modelOpen = MutableStateFlow(false)
     val modelOpen: StateFlow<Boolean> = _modelOpen.asStateFlow()
+
+    private val _roleOpen = MutableStateFlow(false)
+    val roleOpen: StateFlow<Boolean> = _roleOpen.asStateFlow()
+
+    private val _voiceState = MutableStateFlow(VoiceChatState.IDLE)
+    val voiceState: StateFlow<VoiceChatState> = _voiceState.asStateFlow()
+
+    private val _isGeneratingVoice = MutableStateFlow(false)
+    val isGeneratingVoice: StateFlow<Boolean> = _isGeneratingVoice.asStateFlow()
+
+    private val _speakingId = MutableStateFlow<String?>(null)
+    val speakingId: StateFlow<String?> = _speakingId.asStateFlow()
 
     private val _theme = MutableStateFlow(loadTheme())
     val theme: StateFlow<ThemeMode> = _theme.asStateFlow()
@@ -82,6 +107,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _isStreaming = MutableStateFlow(false)
     val isStreaming: StateFlow<Boolean> = _isStreaming.asStateFlow()
+
+    private val _availableModels = MutableStateFlow<Set<String>>(emptySet())
+    val availableModels: StateFlow<Set<String>> = _availableModels.asStateFlow()
 
     val pendingApproval = approvalManager.pending
 
@@ -182,9 +210,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         settingsStorage.defaultRoleId = id
     }
 
-    fun setScreen(screen: Screen) { _screen.value = screen }
+    fun setScreen(screen: Screen) {
+        if (_screen.value == screen) return
+        if (screen == Screen.CHAT) {
+            screenBackStack.clear()
+        } else {
+            screenBackStack.addLast(_screen.value)
+        }
+        _screen.value = screen
+    }
+
+    fun goBack(): Boolean {
+        val previous = screenBackStack.removeLastOrNull() ?: return false
+        _screen.value = previous
+        return true
+    }
+
     fun setDrawerOpen(open: Boolean) { _drawerOpen.value = open }
     fun setModelOpen(open: Boolean) { _modelOpen.value = open }
+    fun setRoleOpen(open: Boolean) { _roleOpen.value = open }
 
     fun selectConversation(id: String) {
         _conversationId.value = id
@@ -195,6 +239,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val id = conversationRepo.createConversation(roleId = _defaultRoleId.value)
             _conversationId.value = id
             _drawerOpen.value = false
+            screenBackStack.clear()
             _screen.value = Screen.CHAT
         }
     }
@@ -225,6 +270,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setModel(model: ModelId) {
+        if (_availableModels.value.isNotEmpty() && model.apiName !in _availableModels.value) {
+            showToast("当前 API Key 未开放 ${model.displayName}")
+            return
+        }
         val convId = _conversationId.value ?: return
         viewModelScope.launch {
             val conv = conversationRepo.getConversation(convId)
@@ -234,6 +283,195 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setCurrentRole(roleId: String) {
+        val convId = _conversationId.value ?: return
+        viewModelScope.launch {
+            conversationRepo.getConversation(convId)?.let { conv ->
+                db.conversationDao().update(conv.copy(roleId = roleId, updatedAt = System.currentTimeMillis()))
+            }
+        }
+    }
+
+    fun generateRoleVoice(role: Role) {
+        if (settingsStorage.loadConnection().apiKey.isBlank()) {
+            showToast("请先配置 API Key")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                _isGeneratingVoice.value = true
+                _voiceState.value = VoiceChatState.THINKING
+                val dataUrl = withContext(Dispatchers.IO) {
+                    MimoClient.synthesizeSpeech(
+                        settingsStorage.loadConnection(), "mimo-v2.5-tts-voicedesign",
+                        "你好，我是${role.name}。${role.description}", role.voiceName, null,
+                        role.voicePrompt ?: "自然、清晰、像面对面聊天一样回应。"
+                    )
+                }
+                // MiMo 声音设计没有可复用的 voiceId；保存生成音频作为克隆样本，
+                // 后续试听和聊天都使用同一份样本，避免每次重新设计出不同声音。
+                val sampleReference = withContext(Dispatchers.IO) {
+                    voiceSampleStore.save(role.id, dataUrl)
+                }
+                val saved = role.copy(
+                    voiceModel = VoiceModel.MIMO_V2_5_TTS_VOICEDESIGN,
+                    voiceSample = sampleReference,
+                    voiceGenerated = true
+                )
+                setRoles(_roles.value.map { if (it.id == role.id) saved else it })
+                showToast("音色已生成并保存，聊天将使用该音色")
+                playDataUrl("role-preview", dataUrl)
+            } catch (e: Exception) {
+                _voiceState.value = VoiceChatState.ERROR
+                showToast(MimoClient.translateError(e))
+                delay(1200)
+                _voiceState.value = VoiceChatState.IDLE
+            } finally {
+                _isGeneratingVoice.value = false
+            }
+        }
+    }
+
+    fun previewRoleVoice(role: Role) {
+        if (role.voiceModel == VoiceModel.MIMO_V2_5_TTS_VOICEDESIGN && role.voiceSample.isNullOrBlank()) {
+            showToast("请先生成并保存音色")
+            return
+        }
+        speakText("role-preview", "你好，我是${role.name}。${role.description}", role)
+    }
+
+    fun speakMessage(messageId: String, text: String) {
+        if (text.isBlank()) return
+        if (_speakingId.value == messageId && mediaPlayer != null) {
+            mediaPlayer?.let { player ->
+                if (player.isPlaying) {
+                    player.pause()
+                    _voiceState.value = VoiceChatState.IDLE
+                } else {
+                    player.start()
+                    _voiceState.value = VoiceChatState.SPEAKING
+                }
+            }
+            return
+        }
+        speakText(messageId, text, activeRole)
+    }
+
+    private fun speakText(id: String, text: String, role: Role) {
+        if (settingsStorage.loadConnection().apiKey.isBlank()) {
+            showToast("请先配置 API Key")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                _voiceState.value = VoiceChatState.THINKING
+                val voiceSample = withContext(Dispatchers.IO) {
+                    voiceSampleStore.resolve(role.voiceSample)
+                }
+                val voiceApiModel = if (role.voiceModel == VoiceModel.MIMO_V2_5_TTS_VOICEDESIGN && !voiceSample.isNullOrBlank()) {
+                    VoiceModel.MIMO_V2_5_TTS_VOICECLONE.apiName
+                } else role.voiceModel.apiName
+                val dataUrl = withContext(Dispatchers.IO) {
+                    MimoClient.synthesizeSpeech(
+                        settingsStorage.loadConnection(), voiceApiModel, text,
+                        role.voiceName, voiceSample, role.voicePrompt ?: "自然、清晰、像面对面聊天一样回应。"
+                    )
+                }
+                playDataUrl(id, dataUrl)
+            } catch (e: Exception) {
+                _speakingId.value = null
+                _voiceState.value = VoiceChatState.ERROR
+                showToast(MimoClient.translateError(e))
+                delay(1200)
+                _voiceState.value = VoiceChatState.IDLE
+            }
+        }
+    }
+
+    private suspend fun playDataUrl(id: String, dataUrl: String) {
+        val encoded = dataUrl.substringAfter(',', "")
+        val file = File(getApplication<Application>().cacheDir, "speech-${System.currentTimeMillis()}.wav")
+        withContext(Dispatchers.IO) {
+            file.writeBytes(Base64.decode(encoded, Base64.DEFAULT))
+        }
+        withContext(Dispatchers.Main) {
+            mediaPlayer?.release()
+            mediaFile?.delete()
+            mediaFile = file
+            mediaPlayer = MediaPlayer().apply {
+                val player = this
+                setDataSource(file.absolutePath)
+                setOnPreparedListener {
+                    _speakingId.value = id
+                    _voiceState.value = VoiceChatState.SPEAKING
+                    start()
+                }
+                setOnCompletionListener {
+                    _speakingId.value = null
+                    _voiceState.value = VoiceChatState.IDLE
+                    release()
+                    file.delete()
+                    if (mediaPlayer === player) {
+                        mediaFile = null
+                        mediaPlayer = null
+                    }
+                }
+                setOnErrorListener { _, _, _ ->
+                    _speakingId.value = null
+                    _voiceState.value = VoiceChatState.ERROR
+                    file.delete()
+                    if (mediaPlayer === player) {
+                        mediaFile = null
+                        mediaPlayer = null
+                    }
+                    release()
+                    true
+                }
+                prepareAsync()
+            }
+        }
+    }
+
+    fun startVoiceRecording() {
+        if (voiceState.value != VoiceChatState.IDLE) return
+        try {
+            voiceRecorder.start()
+            _voiceState.value = VoiceChatState.LISTENING
+        } catch (e: Exception) {
+            voiceRecorder.cancel()
+            showToast("无法开始录音：${e.message ?: "请检查麦克风权限"}")
+        }
+    }
+
+    fun stopVoiceRecording() {
+        if (voiceState.value != VoiceChatState.LISTENING) return
+        val file = voiceRecorder.stop() ?: run { _voiceState.value = VoiceChatState.IDLE; return }
+        viewModelScope.launch {
+            try {
+                _voiceState.value = VoiceChatState.TRANSCRIBING
+                val audio = withContext(Dispatchers.IO) {
+                    "data:audio/mp4;base64," + Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
+                }
+                val transcript = withContext(Dispatchers.IO) { MimoClient.speechRecognition(settingsStorage.loadConnection(), audio) }
+                _voiceState.value = VoiceChatState.THINKING
+                sendMessage(transcript)
+            } catch (e: Exception) {
+                _voiceState.value = VoiceChatState.ERROR
+                showToast(MimoClient.translateError(e))
+                delay(1200)
+            } finally {
+                file.delete()
+                _voiceState.value = VoiceChatState.IDLE
+            }
+        }
+    }
+
+    fun cancelVoiceRecording() {
+        voiceRecorder.cancel()
+        _voiceState.value = VoiceChatState.IDLE
+    }
+
+    // ── Chat: Send Message ──
     fun sendMessage(text: String) {
         val clean = validateMessage(text) ?: return
         val convId = _conversationId.value ?: return
@@ -245,6 +483,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val conv = conversationRepo.getConversation(convId) ?: return@withLock
                 val role = roleFor(conv.roleId)
                 val model = ModelId.fromApiName(conv.model)
+                if (_availableModels.value.isNotEmpty() && model.apiName !in _availableModels.value) {
+                    showToast("当前 API Key 未开放 ${model.displayName}，请切换模型或重新连接")
+                    return@withLock
+                }
                 val userMsg = MessageEntity(
                     conversationId = convId,
                     role = "user",
@@ -273,7 +515,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     userMessageId = userMsg.id,
                     assistantMessageId = assistantMsg.id,
                     systemPrompt = role.prompt,
-                    model = model
+                    model = model,
+                    useAgent = shouldUseAgent(clean),
+                    userText = clean
                 )
             }
         }
@@ -289,6 +533,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return clean
     }
 
+    private fun shouldUseAgent(text: String): Boolean {
+        val lower = text.lowercase()
+        val explicitWorkspaceTerms = listOf(
+            "github", "git hub", "仓库", "代码库", "工作区", "项目文件", "pull request", "pr ",
+            "commit", "push", "branch", "提交代码", "推送代码", "读取文件", "修改文件", "编辑文件",
+            "改文件", "删除文件", "读取代码", "修改代码", "编辑代码", "写代码", "同步代码", "改代码", "修复代码"
+        )
+        return explicitWorkspaceTerms.any { lower.contains(it) }
+    }
+
+    private suspend fun prepareWorkspaceForAgent(text: String) {
+        val current = settingsStorage.loadWorkspaceConfig()
+        if (current.token.isBlank()) {
+            throw IllegalStateException("如需处理 GitHub 代码，请先在设置中配置 GitHub Token")
+        }
+
+        val repository = Regex("github\\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)", RegexOption.IGNORE_CASE)
+            .find(text)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?: Regex("(?<![\\w.-])([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?![\\w.-])")
+                .find(text)
+                ?.groupValues
+                ?.getOrNull(1)
+            ?: current.repository
+        if (repository.isNullOrBlank()) {
+            throw IllegalStateException("请在消息中说明 GitHub 仓库，例如 owner/repository")
+        }
+
+        val config = current.copy(repository = repository)
+        settingsStorage.saveWorkspaceConfig(config)
+        _workspaceConfig.value = config
+        if (!workspace.isReadyFor(config)) {
+            showToast("正在准备 GitHub 代码工作区…")
+            _workspaceSyncState.value = WorkspaceSyncState.Syncing
+            val ready = workspace.sync(config)
+            _workspaceSyncState.value = ready
+        }
+    }
+
     private fun hasActiveGenerationLocked(): Boolean {
         val active = generationTask?.job?.isActive == true
         if (active) showToast("请等待当前回答完成，或先停止生成")
@@ -300,7 +584,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         userMessageId: String,
         assistantMessageId: String,
         systemPrompt: String,
-        model: ModelId
+        model: ModelId,
+        useAgent: Boolean,
+        userText: String
     ) {
         check(generationTask?.job?.isActive != true) { "generation already active" }
 
@@ -309,15 +595,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
-                chatRepo.executeGeneration(
-                    conversationId = conversationId,
-                    assistantMessageId = assistantMessageId,
-                    userMessageId = userMessageId,
-                    systemPrompt = systemPrompt,
-                    model = model
-                ).collect { chunk ->
+                if (useAgent) prepareWorkspaceForAgent(userText)
+                val generation = if (useAgent) {
+                    agentRepo.executeGeneration(
+                        conversationId = conversationId,
+                        assistantMessageId = assistantMessageId,
+                        userMessageId = userMessageId,
+                        systemPrompt = systemPrompt,
+                        model = model
+                    )
+                } else {
+                    chatRepo.executeGeneration(
+                        conversationId = conversationId,
+                        assistantMessageId = assistantMessageId,
+                        userMessageId = userMessageId,
+                        systemPrompt = systemPrompt,
+                        model = model
+                    )
+                }
+                generation.collect { chunk ->
                     if (chunk is StreamChunk.Error) showToast(chunk.message)
                 }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val message = MimoClient.translateError(e)
+                conversationRepo.updateMessageStatus(assistantMessageId, MessageStatus.FAILED, message)
+                showToast(message)
             } finally {
                 generationMutex.withLock {
                     if (generationTask?.token == token) {
@@ -410,7 +714,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     touchConversation(convId)
                 }
 
-                startGenerationLocked(convId, userMsg.id, newAssistant.id, role.prompt, model)
+                startGenerationLocked(
+                    convId,
+                    userMsg.id,
+                    newAssistant.id,
+                    role.prompt,
+                    model,
+                    useAgent = shouldUseAgent(userMsg.content),
+                    userText = userMsg.content
+                )
             }
         }
     }
@@ -450,7 +762,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     touchConversation(convId)
                 }
 
-                startGenerationLocked(convId, userMsg.id, newAssistant.id, role.prompt, model)
+                startGenerationLocked(
+                    convId,
+                    userMsg.id,
+                    newAssistant.id,
+                    role.prompt,
+                    model,
+                    useAgent = shouldUseAgent(userMsg.content),
+                    userText = userMsg.content
+                )
             }
         }
     }
@@ -487,7 +807,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     touchConversation(convId)
                 }
 
-                startGenerationLocked(convId, messageId, newAssistant.id, role.prompt, model)
+                startGenerationLocked(
+                    convId,
+                    messageId,
+                    newAssistant.id,
+                    role.prompt,
+                    model,
+                    useAgent = shouldUseAgent(cleanText),
+                    userText = cleanText
+                )
             }
         }
     }
@@ -514,12 +842,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val probeResults: StateFlow<List<ProbeResult>> = _probeResults.asStateFlow()
 
     fun loadConnection(): MimoConnection = settingsStorage.loadConnection()
-    fun saveConnection(connection: MimoConnection) { settingsStorage.saveConnection(connection) }
+    fun saveConnection(connection: MimoConnection) {
+        settingsStorage.saveConnection(connection)
+        _availableModels.value = emptySet()
+    }
     fun clearApiKey() { settingsStorage.clearApiKey() }
 
     fun saveWorkspaceConfig(config: GitHubWorkspaceConfig) {
         settingsStorage.saveWorkspaceConfig(config)
         _workspaceConfig.value = config
+    }
+
+    fun saveGitHubToken(token: String) {
+        saveWorkspaceConfig(settingsStorage.loadWorkspaceConfig().copy(token = token.trim()))
     }
 
     fun syncWorkspace(config: GitHubWorkspaceConfig) {
@@ -565,6 +900,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val models = com.example.mimochat.data.remote.MimoClient.loadModels(config)
                 if (models.isEmpty()) throw Exception("没有加载到模型")
+                _availableModels.value = models.toSet()
                 _connectionPhase.value = ConnectionPhase.TESTING
                 _probeResults.value = models.map { m ->
                     ProbeResult(model = m, capability = "识别中", status = ProbeStatus.TESTING, detail = "正在验证能力")
@@ -574,6 +910,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     results.add(com.example.mimochat.data.remote.MimoClient.probeModel(config, m))
                     _probeResults.value = results.toList()
                 }
+                _availableModels.value = results
+                    .filter { it.status == ProbeStatus.PASSED || it.status == ProbeStatus.REACHABLE }
+                    .map { it.model }
+                    .toSet()
                 _connectionPhase.value = ConnectionPhase.DONE
             } catch (e: Exception) {
                 _connectionError.value = com.example.mimochat.data.remote.MimoClient.translateError(e)
@@ -597,6 +937,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         approvalManager.cancelPending()
+        voiceRecorder.cancel()
+        mediaPlayer?.release()
+        mediaFile?.delete()
+        mediaPlayer = null
         super.onCleared()
     }
 }

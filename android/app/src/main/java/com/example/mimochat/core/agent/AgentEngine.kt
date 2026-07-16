@@ -7,8 +7,6 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -31,13 +29,13 @@ data class AgentApproval(
 )
 
 class ApprovalManager {
-    private val mutex = Mutex()
+    private val lock = Any()
     private val _pending = MutableStateFlow<AgentApproval?>(null)
     val pending: StateFlow<AgentApproval?> = _pending.asStateFlow()
     private var deferred: CompletableDeferred<Boolean>? = null
 
     suspend fun request(approval: AgentApproval): Boolean {
-        val waiter = mutex.withLock {
+        val waiter = synchronized(lock) {
             check(deferred == null) { "已有操作等待用户确认" }
             CompletableDeferred<Boolean>().also {
                 deferred = it
@@ -52,10 +50,13 @@ class ApprovalManager {
     fun cancelPending() = resolve(false)
 
     private fun resolve(approved: Boolean) {
-        val current = deferred ?: return
-        deferred = null
-        _pending.value = null
-        current.complete(approved)
+        val current = synchronized(lock) {
+            val pending = deferred ?: return@synchronized null
+            deferred = null
+            _pending.value = null
+            pending
+        }
+        current?.complete(approved)
     }
 }
 

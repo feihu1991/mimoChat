@@ -1,8 +1,15 @@
 package com.example.mimochat.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,10 +25,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import android.Manifest
+import android.app.Activity
 import com.example.mimochat.data.*
 import com.example.mimochat.theme.*
 import kotlinx.coroutines.launch
@@ -37,6 +55,7 @@ fun ChatScreen(
     hasApiKey: Boolean,
     onMenu: () -> Unit,
     onNew: () -> Unit,
+    onRole: () -> Unit,
     onModel: () -> Unit,
     onInput: (String) -> Unit,
     onSend: () -> Unit,
@@ -45,12 +64,20 @@ fun ChatScreen(
     onRegenerate: (String) -> Unit,
     onCopy: (String) -> Unit,
     onEdit: (String, String) -> Unit,
+    voiceState: VoiceChatState,
+    speakingId: String?,
+    onVoiceStart: () -> Unit,
+    onVoiceStop: () -> Unit,
+    onVoiceCancel: () -> Unit,
+    onSpeak: (String, String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val scrollPolicy = remember { ChatScrollPolicy() }
     var isProgrammaticScroll by remember { mutableStateOf(false) }
+    var voiceInputMode by remember { mutableStateOf(false) }
 
     suspend fun scrollToBottom(animated: Boolean) {
         if (messages.isEmpty()) return
@@ -112,6 +139,7 @@ fun ChatScreen(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .windowInsetsPadding(WindowInsets.statusBars)
     ) {
         ChatTopBar(
             conversationTitle = conversationTitle,
@@ -119,6 +147,7 @@ fun ChatScreen(
             model = model,
             onMenu = onMenu,
             onNew = onNew,
+            onRole = onRole,
             onModel = onModel
         )
 
@@ -139,7 +168,9 @@ fun ChatScreen(
                         onRetry = { onRetry(message.id) },
                         onRegenerate = { onRegenerate(message.id) },
                         onCopy = { onCopy(message.text) },
-                        onEdit = { newText -> onEdit(message.id, newText) }
+                        onEdit = { newText -> onEdit(message.id, newText) },
+                        onSpeak = { onSpeak(message.id, message.text) },
+                        isSpeaking = speakingId == message.id && voiceState == VoiceChatState.SPEAKING
                     )
                 }
             }
@@ -190,7 +221,7 @@ fun ChatScreen(
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        "请先在设置中配置 API Key",
+                        "请先在设置中配置模型 API Key",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onErrorContainer
                     )
@@ -200,11 +231,22 @@ fun ChatScreen(
 
         ComposerArea(
             input = input,
-            model = model,
             isStreaming = isStreaming,
+            voiceState = voiceState,
+            voiceInputMode = voiceInputMode,
+            onToggleVoiceInput = { voiceInputMode = !voiceInputMode },
             onInput = onInput,
             onSend = onSend,
-            onStop = onStop
+            onStop = onStop,
+            onVoiceStart = {
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    onVoiceStart()
+                } else if (context is Activity) {
+                    ActivityCompat.requestPermissions(context, arrayOf(Manifest.permission.RECORD_AUDIO), 4101)
+                }
+            },
+            onVoiceStop = onVoiceStop,
+            onVoiceCancel = onVoiceCancel
         )
     }
 }
@@ -215,7 +257,9 @@ private fun MessageBubble(
     onRetry: () -> Unit,
     onRegenerate: () -> Unit,
     onCopy: () -> Unit,
-    onEdit: (String) -> Unit
+    onEdit: (String) -> Unit,
+    onSpeak: () -> Unit,
+    isSpeaking: Boolean
 ) {
     var showMenu by remember(message.id) { mutableStateOf(false) }
     var isEditing by remember(message.id) { mutableStateOf(false) }
@@ -324,7 +368,7 @@ private fun MessageBubble(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "MiMo Code",
+                    "MiMo",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface
@@ -385,6 +429,14 @@ private fun MessageBubble(
                 }
             }
 
+            if (message.text.isNotBlank()) {
+                SmallButton(
+                    onClick = onSpeak,
+                    icon = if (isSpeaking) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    label = if (isSpeaking) "暂停播放" else "播放语音"
+                )
+            }
+
             if (isFailed && message.errorMessage != null) {
                 Text(
                     message.errorMessage,
@@ -426,8 +478,20 @@ private fun MessageBubble(
 
 @Composable
 private fun StatusLabel(text: String, color: Color) {
-    Spacer(Modifier.width(8.dp))
-    Text(text, style = MaterialTheme.typography.labelSmall, color = color)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Spacer(Modifier.width(8.dp))
+        if (text == "生成中" || text == "连接中") {
+            LoadingIcon(
+                Icons.Default.AutoAwesome,
+                contentDescription = "等待模型返回",
+                modifier = Modifier.size(13.dp),
+                tint = color,
+                alternateImageVector = Icons.Default.HourglassTop
+            )
+            Spacer(Modifier.width(4.dp))
+        }
+        Text(text, style = MaterialTheme.typography.labelSmall, color = color)
+    }
 }
 
 @Composable
@@ -449,13 +513,74 @@ private fun SmallButton(
 
 @Composable
 private fun MarkdownText(text: String, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val rendered = remember(text, colors.onSurface, colors.surfaceVariant) {
+        markdownAnnotatedString(text, colors.onSurface, colors.surfaceVariant)
+    }
     Text(
-        text = text,
+        text = rendered,
         modifier = modifier,
         fontSize = 14.sp,
         lineHeight = 23.sp,
         color = MaterialTheme.colorScheme.onSurface
     )
+}
+
+private fun markdownAnnotatedString(text: String, textColor: Color, codeBackground: Color): AnnotatedString =
+    buildAnnotatedString {
+        val lines = text.split('\n')
+        var inCode = false
+        lines.forEachIndexed { index, rawLine ->
+            val line = rawLine.trimEnd()
+            if (line.trimStart().startsWith("```")) {
+                inCode = !inCode
+            } else if (inCode) {
+                withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = codeBackground, color = textColor)) { append(line) }
+            } else {
+                val heading = Regex("^#{1,6}\\s+").find(line)
+                if (heading != null) {
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = textColor)) { append(line.removeRange(heading.range)) }
+                } else if (line.trimStart().startsWith("- ") || line.trimStart().startsWith("* ")) {
+                    append("• ")
+                    appendInlineMarkdown(line.trimStart().drop(2), textColor, codeBackground)
+                } else {
+                    appendInlineMarkdown(line, textColor, codeBackground)
+                }
+            }
+            if (index < lines.lastIndex) append('\n')
+        }
+    }
+
+private fun AnnotatedString.Builder.appendInlineMarkdown(value: String, textColor: Color, codeBackground: Color) {
+    var index = 0
+    while (index < value.length) {
+        when {
+            value.startsWith("**", index) || value.startsWith("__", index) -> {
+                val marker = value.substring(index, index + 2)
+                val end = value.indexOf(marker, index + 2)
+                if (end > index + 2) {
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = textColor)) { append(value.substring(index + 2, end)) }
+                    index = end + 2
+                } else { append(value[index]); index++ }
+            }
+            value[index] == '`' -> {
+                val end = value.indexOf('`', index + 1)
+                if (end > index + 1) {
+                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = codeBackground, color = textColor)) { append(value.substring(index + 1, end)) }
+                    index = end + 1
+                } else { append(value[index]); index++ }
+            }
+            value[index] == '*' || value[index] == '_' -> {
+                val marker = value[index]
+                val end = value.indexOf(marker, index + 1)
+                if (end > index + 1) {
+                    withStyle(SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic, color = textColor)) { append(value.substring(index + 1, end)) }
+                    index = end + 1
+                } else { append(value[index]); index++ }
+            }
+            else -> { append(value[index]); index++ }
+        }
+    }
 }
 
 @Composable
@@ -465,6 +590,7 @@ private fun ChatTopBar(
     model: ModelId,
     onMenu: () -> Unit,
     onNew: () -> Unit,
+    onRole: () -> Unit,
     onModel: () -> Unit
 ) {
     Surface(
@@ -475,7 +601,7 @@ private fun ChatTopBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(64.dp)
+                .height(76.dp)
                 .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -485,12 +611,11 @@ private fun ChatTopBar(
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .clickable(onClick = onModel)
-                    .padding(horizontal = 4.dp)
+                    .padding(horizontal = 6.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "MiMo Code",
+                        "MiMo",
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -508,29 +633,48 @@ private fun ChatTopBar(
                         modifier = Modifier.weight(1f, fill = false)
                     )
                 }
-                Spacer(Modifier.height(3.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(Color(android.graphics.Color.parseColor(role.color)))
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        "${role.name} · ${model.displayName}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(Modifier.width(3.dp))
-                    Icon(
-                        Icons.Default.KeyboardArrowDown,
-                        contentDescription = null,
-                        modifier = Modifier.size(14.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                Spacer(Modifier.height(7.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        onClick = onRole,
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.62f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(android.graphics.Color.parseColor(role.color)))
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(role.name, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Medium)
+                            Spacer(Modifier.width(4.dp))
+                            Icon(Icons.Default.ExpandMore, null, modifier = Modifier.size(15.dp))
+                        }
+                    }
+                    Surface(
+                        onClick = onModel,
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.78f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.AutoAwesome, null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text(model.displayName, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Medium)
+                            Spacer(Modifier.width(4.dp))
+                            Icon(Icons.Default.ExpandMore, null, modifier = Modifier.size(15.dp))
+                        }
+                    }
                 }
             }
             IconButton(onClick = onNew) {
@@ -564,26 +708,26 @@ private fun RoleWelcome(role: Role) {
         }
         Spacer(Modifier.height(22.dp))
         Text(
-            "今天想改什么？",
+            "今天想聊点什么？",
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.SemiBold
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            "描述代码、错误或需求，让 ${role.name} 帮你分析并给出可执行修改方案。",
+            "和 ${role.name} 分享问题、想法或计划，它会像聊天一样陪你梳理和解决。",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             lineHeight = 21.sp
         )
         Spacer(Modifier.height(24.dp))
-        WelcomeHint(Icons.Default.Code, "分析代码与定位问题")
+        WelcomeHint(Icons.Default.Forum, "自然对话与问题梳理")
         Spacer(Modifier.height(10.dp))
-        WelcomeHint(Icons.Default.Difference, "整理修改方案和代码差异")
+        WelcomeHint(Icons.Default.Lightbulb, "一起思考、解释和规划")
         Spacer(Modifier.height(10.dp))
-        WelcomeHint(Icons.Default.Rule, "检查风险、边界和遗漏")
+        WelcomeHint(Icons.Default.Code, "需要时再帮你处理代码")
         Spacer(Modifier.height(22.dp))
         Text(
-            "本地端不提供构建、打包、部署或发布操作。",
+            "普通聊天不会自动读取或修改代码；你明确提出时才会使用 GitHub。",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -617,11 +761,16 @@ private fun WelcomeHint(icon: androidx.compose.ui.graphics.vector.ImageVector, t
 @Composable
 private fun ComposerArea(
     input: String,
-    model: ModelId,
     isStreaming: Boolean,
+    voiceState: VoiceChatState,
+    voiceInputMode: Boolean,
+    onToggleVoiceInput: () -> Unit,
     onInput: (String) -> Unit,
     onSend: () -> Unit,
-    onStop: () -> Unit
+    onStop: () -> Unit,
+    onVoiceStart: () -> Unit,
+    onVoiceStop: () -> Unit,
+    onVoiceCancel: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -641,105 +790,186 @@ private fun ComposerArea(
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             shadowElevation = 4.dp
         ) {
-            Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
-                OutlinedTextField(
-                    value = input,
-                    onValueChange = onInput,
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = {
-                        Text(
-                            "向 MiMo Code 描述要完成的任务",
-                            fontSize = 14.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color.Transparent,
-                        unfocusedBorderColor = Color.Transparent
-                    ),
-                    minLines = 1,
-                    maxLines = 6
-                )
-
-                Row(
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.Bottom
+            ) {
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 6.dp, end = 2.dp, bottom = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.78f))
+                        .clickable(
+                            enabled = !isStreaming && voiceState != VoiceChatState.LISTENING,
+                            onClick = onToggleVoiceInput
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Surface(
-                        shape = RoundedCornerShape(100.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Default.PhoneAndroid,
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(Modifier.width(5.dp))
+                    AnimatedContent(
+                        targetState = voiceInputMode,
+                        transitionSpec = { (scaleIn() + fadeIn()) togetherWith (scaleOut() + fadeOut()) },
+                        label = "voice-keyboard-toggle"
+                    ) { voiceMode ->
+                        Icon(
+                            imageVector = if (voiceMode) Icons.Default.Keyboard else Icons.Default.Mic,
+                            contentDescription = if (voiceMode) "切换文字输入" else "切换语音输入",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Spacer(Modifier.width(8.dp))
+
+                if (voiceInputMode) {
+                    VoiceInputSurface(
+                        voiceState = voiceState,
+                        enabled = !isStreaming &&
+                            voiceState != VoiceChatState.TRANSCRIBING &&
+                            voiceState != VoiceChatState.THINKING,
+                        onToggle = onToggleVoiceInput,
+                        onVoiceStart = onVoiceStart,
+                        onVoiceStop = onVoiceStop,
+                        onVoiceCancel = onVoiceCancel,
+                        modifier = Modifier.weight(1f)
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = input,
+                        onValueChange = onInput,
+                        modifier = Modifier.weight(1f),
+                        placeholder = {
                             Text(
-                                "本地会话",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Medium,
+                                "和 MiMo 聊聊，遇到代码问题时直接告诉它",
+                                fontSize = 14.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                        }
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Icon(
-                        Icons.Default.AutoAwesome,
-                        contentDescription = null,
-                        modifier = Modifier.size(15.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color.Transparent,
+                            unfocusedBorderColor = Color.Transparent
+                        ),
+                        minLines = 1,
+                        maxLines = 6
                     )
-                    Spacer(Modifier.width(5.dp))
-                    Text(
-                        model.displayName,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(Modifier.weight(1f))
+                }
 
-                    Surface(
-                        onClick = if (isStreaming) onStop else onSend,
-                        enabled = isStreaming || input.isNotBlank(),
-                        modifier = Modifier.size(36.dp),
-                        shape = CircleShape,
-                        color = when {
-                            isStreaming -> MaterialTheme.colorScheme.onSurface
-                            input.isNotBlank() -> MaterialTheme.colorScheme.primary
-                            else -> MaterialTheme.colorScheme.surfaceVariant
-                        }
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
+                Spacer(Modifier.width(8.dp))
+
+                Surface(
+                    onClick = if (isStreaming) onStop else onSend,
+                    enabled = isStreaming || input.isNotBlank(),
+                    modifier = Modifier.size(42.dp),
+                    shape = CircleShape,
+                    color = when {
+                        isStreaming -> MaterialTheme.colorScheme.onSurface
+                        input.isNotBlank() -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.surfaceVariant
+                    }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        AnimatedContent(
+                            targetState = isStreaming,
+                            transitionSpec = { (scaleIn() + fadeIn()) togetherWith (scaleOut() + fadeOut()) },
+                            label = "send-stop-icon"
+                        ) { waiting ->
                             Icon(
-                                imageVector = if (isStreaming) Icons.Default.Stop else Icons.Default.ArrowUpward,
-                                contentDescription = if (isStreaming) "停止生成" else "发送",
-                                modifier = Modifier.size(if (isStreaming) 15.dp else 18.dp),
-                                tint = when {
-                                    isStreaming -> MaterialTheme.colorScheme.surface
-                                    input.isNotBlank() -> MaterialTheme.colorScheme.onPrimary
-                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                }
+                                imageVector = if (waiting) Icons.Default.Stop else Icons.Default.ArrowUpward,
+                                contentDescription = if (waiting) "停止生成" else "发送",
+                                modifier = Modifier.size(19.dp),
+                                tint = if (waiting || input.isNotBlank()) {
+                                    if (waiting) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onPrimary
+                                } else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
                 }
             }
         }
-
-        Spacer(Modifier.height(6.dp))
-        Text(
-            "本地端不执行打包、部署或发布操作",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.76f)
-        )
     }
+}
+
+@Composable
+private fun VoiceInputSurface(
+    voiceState: VoiceChatState,
+    enabled: Boolean,
+    onToggle: () -> Unit,
+    onVoiceStart: () -> Unit,
+    onVoiceStop: () -> Unit,
+    onVoiceCancel: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier
+            .heightIn(min = 42.dp, max = 132.dp)
+            .voicePressGesture(
+                enabled = enabled,
+                onTap = onToggle,
+                onLongPress = onVoiceStart,
+                onRelease = onVoiceStop,
+                onCancel = onVoiceCancel
+            ),
+        shape = RoundedCornerShape(18.dp),
+        color = if (voiceState == VoiceChatState.LISTENING) {
+            MaterialTheme.colorScheme.errorContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.78f)
+        }
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 11.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AnimatedContent(
+                targetState = voiceState == VoiceChatState.LISTENING,
+                transitionSpec = { (scaleIn() + fadeIn()) togetherWith (scaleOut() + fadeOut()) },
+                label = "voice-record-state"
+            ) { recording ->
+                Icon(
+                    imageVector = if (recording) Icons.Default.StopCircle else Icons.Default.RecordVoiceOver,
+                    contentDescription = if (recording) "松开结束录音" else "按住说话",
+                    tint = if (recording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = when (voiceState) {
+                    VoiceChatState.LISTENING -> "松开结束"
+                    VoiceChatState.TRANSCRIBING -> "正在识别语音…"
+                    VoiceChatState.THINKING -> "正在理解语音…"
+                    else -> "按住说话"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium
+            )
+        }
+    }
+}
+
+private fun Modifier.voicePressGesture(
+    enabled: Boolean,
+    onTap: () -> Unit,
+    onLongPress: () -> Unit,
+    onRelease: () -> Unit,
+    onCancel: () -> Unit
+): Modifier = if (!enabled) this else pointerInput(Unit) {
+    var longPressed = false
+    detectTapGestures(
+        onLongPress = {
+            longPressed = true
+            onLongPress()
+        },
+        onPress = {
+            longPressed = false
+            val released = tryAwaitRelease()
+            if (longPressed) {
+                if (released) onRelease() else onCancel()
+            }
+        },
+        onTap = {
+            if (!longPressed) onTap()
+        }
+    )
 }
