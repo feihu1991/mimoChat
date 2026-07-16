@@ -9,7 +9,7 @@ import com.example.mimochat.data.Message
 import com.example.mimochat.data.Role
 import com.example.mimochat.data.VoiceModel
 import com.example.mimochat.data.local.SettingsStorage
-import com.example.mimochat.data.remote.MimoClient
+import com.example.mimochat.data.remote.VoiceMimoClient
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -105,7 +105,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     } else {
                         null
                     }
-                    val bytes = MimoClient.synthesizeSpeechBytes(
+                    val bytes = VoiceMimoClient.synthesizeSpeech(
                         config = config,
                         model = role.voiceModel.apiName,
                         text = message.text,
@@ -158,7 +158,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             val candidates = mutableListOf<VoiceDesignCandidate>()
             try {
                 repeat(CANDIDATE_COUNT) { index ->
-                    val bytes = MimoClient.designVoiceSample(
+                    val bytes = VoiceMimoClient.designVoice(
                         config = config,
                         description = cleanDescription,
                         text = DESIGN_SAMPLE_TEXT
