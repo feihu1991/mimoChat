@@ -168,9 +168,10 @@ class GitHubWorkspace(
     fun listFiles(pattern: String? = null, limit: Int = 300): List<String> {
         ensureReady()
         val regex = pattern?.takeIf { it.isNotBlank() }?.let(::globToRegex)
+        val metaPrefix = metaRoot.canonicalPath + File.separator
         return root.walkTopDown()
             .filter { it.isFile }
-            .filterNot { it.toPath().startsWith(metaRoot.toPath()) }
+            .filterNot { it.canonicalPath.startsWith(metaPrefix) }
             .map { it.relativeTo(root).invariantSeparatorsPath }
             .filter { regex == null || regex.matches(it) }
             .sorted()
@@ -403,7 +404,9 @@ class GitHubWorkspace(
         require(target == canonicalBase || target.path.startsWith(canonicalBase.path + File.separator)) {
             "路径越过工作区：$path"
         }
-        require(!target.toPath().startsWith(metaRoot.canonicalFile.toPath()) || base == baseRoot) {
+        val canonicalMeta = metaRoot.canonicalFile
+        val insideMeta = target == canonicalMeta || target.path.startsWith(canonicalMeta.path + File.separator)
+        require(!insideMeta || canonicalBase == baseRoot.canonicalFile) {
             "禁止访问工作区元数据"
         }
         return target
