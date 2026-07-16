@@ -25,18 +25,21 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val theme by viewModel.theme.collectAsState()
     val roles by viewModel.roles.collectAsState()
 
-    // input 由 ChatScreen 内部管理
     var input by remember { mutableStateOf("") }
 
     val currentConversation = conversations.find { it.id == conversationId }
-    val activeRole = roles.find { it.id == currentConversation?.roleId } ?: roles.firstOrNull() ?: DEFAULT_ROLES[0]
-    val currentModel = currentConversation?.model?.let { ModelId.fromApiName(it) } ?: ModelId.MIMO_V2_5
+    val activeRole = roles.find { it.id == currentConversation?.roleId }
+        ?: roles.firstOrNull()
+        ?: DEFAULT_ROLES[0]
+    val currentModel = currentConversation?.model?.let { ModelId.fromApiName(it) }
+        ?: ModelId.MIMO_V2_5
 
     Box(modifier = Modifier.fillMaxSize()) {
         when (screen) {
             Screen.CHAT -> {
                 ChatScreen(
                     messages = messages,
+                    conversationTitle = currentConversation?.title ?: "新对话",
                     role = activeRole,
                     model = currentModel,
                     input = input,
@@ -106,7 +109,6 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             }
         }
 
-        // History drawer
         if (drawerOpen) {
             HistoryDrawer(
                 conversations = conversations,
@@ -114,23 +116,30 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 currentId = conversationId,
                 onClose = { viewModel.setDrawerOpen(false) },
                 onNew = { viewModel.startNewConversation(); input = "" },
-                onSelect = { id -> viewModel.selectConversation(id); viewModel.setDrawerOpen(false) },
-                onSettings = { viewModel.setDrawerOpen(false); viewModel.setScreen(Screen.SETTINGS) },
+                onSelect = { id ->
+                    viewModel.selectConversation(id)
+                    viewModel.setDrawerOpen(false)
+                },
+                onSettings = {
+                    viewModel.setDrawerOpen(false)
+                    viewModel.setScreen(Screen.SETTINGS)
+                },
                 onRename = { id, title -> viewModel.renameConversation(id, title) },
                 onDelete = { id -> viewModel.deleteConversation(id) }
             )
         }
 
-        // Model panel
         if (modelOpen) {
             ModelPanel(
                 model = currentModel,
                 onClose = { viewModel.setModelOpen(false) },
-                onSelect = { viewModel.setModel(it); viewModel.setModelOpen(false) }
+                onSelect = {
+                    viewModel.setModel(it)
+                    viewModel.setModelOpen(false)
+                }
             )
         }
 
-        // Toast
         if (toast.isNotBlank()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
                 Surface(
