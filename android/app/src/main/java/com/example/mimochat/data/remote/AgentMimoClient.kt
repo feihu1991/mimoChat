@@ -6,13 +6,12 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
-import io.ktor.client.request.timeout
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.serialization.kotlinx.json.json
-import io.ktor.utils.io.isClosedForRead
 import io.ktor.utils.io.readUTF8Line
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -87,7 +86,7 @@ object AgentMimoClient {
 
     fun assistantToolMessage(text: String, calls: List<Triple<String, String, String>>): JsonObject = buildJsonObject {
         put("role", "assistant")
-        put("content", if (text.isBlank()) JsonPrimitive("") else JsonPrimitive(text))
+        put("content", JsonPrimitive(text))
         put("tool_calls", JsonArray(calls.map { (id, name, arguments) ->
             buildJsonObject {
                 put("id", id)
