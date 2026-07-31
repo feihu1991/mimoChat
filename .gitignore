@@ -3,6 +3,7 @@ dist/
 .mimocode/
 .agents/
 .firecrawl/
+.reasonix/
 *.tsbuildinfo
 .env
 .env.*
