@@ -1,6 +1,7 @@
 package com.example.mimochat.data.remote
 
 import com.example.mimochat.data.*
+import android.util.Base64
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.okhttp.*
@@ -11,6 +12,8 @@ import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.utils.io.*
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -107,7 +110,8 @@ object MimoClient {
         val body = mapOf(
             "model" to model,
             "messages" to apiMessages,
-            "stream" to true
+            "stream" to true,
+            "max_tokens" to 4096
         )
 
         val response = getClient(config).post("${normalizeBaseUrl(config.baseUrl)}/chat/completions") {
@@ -149,7 +153,8 @@ object MimoClient {
         val body = mapOf(
             "model" to model,
             "messages" to listOf(mapOf("role" to "user", "content" to content)),
-            "stream" to false
+            "stream" to false,
+            "max_tokens" to 4096
         )
 
         val response = getClient(config).post("${normalizeBaseUrl(config.baseUrl)}/chat/completions") {
@@ -316,7 +321,7 @@ object MimoClient {
                             mapOf(
                                 "type" to "input_audio",
                                 "input_audio" to mapOf(
-                                    "data" to "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="
+                                    "data" to testWavDataUrl()
                                 )
                             )
                         )
@@ -353,6 +358,34 @@ object MimoClient {
                 "max_completion_tokens" to 16
             )
         }
+    }
+
+    /** 生成一段 0.35s / 8kHz 正弦波 WAV，作为 ASR 探测的有效音频样本（空音频会导致服务端 500）。 */
+    private fun testWavDataUrl(): String {
+        val sampleRate = 8000
+        val seconds = 0.35
+        val samples = (sampleRate * seconds).toInt()
+        val buffer = ByteArray(44 + samples * 2)
+        val view = ByteBuffer.wrap(buffer).order(ByteOrder.LITTLE_ENDIAN)
+        view.put("RIFF".toByteArray())
+        view.putInt(36 + samples * 2)
+        view.put("WAVE".toByteArray())
+        view.put("fmt ".toByteArray())
+        view.putInt(16)
+        view.putShort(1)
+        view.putShort(1)
+        view.putInt(sampleRate)
+        view.putInt(sampleRate * 2)
+        view.putShort(2)
+        view.putShort(16)
+        view.put("data".toByteArray())
+        view.putInt(samples * 2)
+        for (i in 0 until samples) {
+            val envelope = Math.sin(Math.PI * i / samples)
+            val value = Math.sin(2.0 * Math.PI * 220 * i / sampleRate) * 5000 * envelope
+            view.putShort(value.toInt().toShort())
+        }
+        return "data:audio/wav;base64," + Base64.encodeToString(buffer, Base64.NO_WRAP)
     }
 
     /** Ktor 的默认序列化器无法直接处理 Map<String, Any> 中的异构嵌套集合。 */

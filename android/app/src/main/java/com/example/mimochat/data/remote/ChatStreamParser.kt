@@ -62,57 +62,57 @@ object ChatStreamParser {
     }
 
     private fun parseChunks(json: JsonObject): List<StreamChunk> {
-        val error = json["error"]?.jsonObject
+        val error = json["error"] as? JsonObject
         if (error != null) {
-            val message = error["message"]?.jsonPrimitive?.contentOrNull ?: "未知错误"
+            val message = (error["message"] as? JsonPrimitive)?.contentOrNull ?: "未知错误"
             return listOf(StreamChunk.Error(message))
         }
 
-        val choices = json["choices"]?.jsonArray ?: return emptyList()
+        val choices = json["choices"] as? JsonArray ?: return emptyList()
         if (choices.isEmpty()) return emptyList()
-        val choice = choices[0].jsonObject
+        val choice = choices[0] as? JsonObject ?: return emptyList()
         val events = mutableListOf<StreamChunk>()
 
-        val delta = choice["delta"]?.jsonObject
+        val delta = choice["delta"] as? JsonObject
         if (delta != null) {
-            delta["role"]?.jsonPrimitive?.contentOrNull?.let { events += StreamChunk.Role(it) }
-            delta["reasoning_content"]?.jsonPrimitive?.contentOrNull
+            (delta["role"] as? JsonPrimitive)?.contentOrNull?.let { events += StreamChunk.Role(it) }
+            (delta["reasoning_content"] as? JsonPrimitive)?.contentOrNull
                 ?.takeIf { it.isNotEmpty() }
                 ?.let { events += StreamChunk.ReasoningDelta(it) }
             textContent(delta["content"])
                 ?.takeIf { it.isNotEmpty() }
                 ?.let { events += StreamChunk.Delta(it) }
 
-            delta["tool_calls"]?.jsonArray?.forEach { element ->
-                val tool = element.jsonObject
-                val function = tool["function"]?.jsonObject
+            (delta["tool_calls"] as? JsonArray)?.forEach { element ->
+                val tool = element as? JsonObject ?: return@forEach
+                val function = tool["function"] as? JsonObject
                 events += StreamChunk.ToolCallDelta(
-                    index = tool["index"]?.jsonPrimitive?.intOrNull ?: 0,
-                    id = tool["id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                    name = function?.get("name")?.jsonPrimitive?.contentOrNull.orEmpty(),
-                    arguments = function?.get("arguments")?.jsonPrimitive?.contentOrNull.orEmpty()
+                    index = (tool["index"] as? JsonPrimitive)?.intOrNull ?: 0,
+                    id = (tool["id"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+                    name = (function?.get("name") as? JsonPrimitive)?.contentOrNull.orEmpty(),
+                    arguments = (function?.get("arguments") as? JsonPrimitive)?.contentOrNull.orEmpty()
                 )
             }
         }
 
-        val message = choice["message"]?.jsonObject
+        val message = choice["message"] as? JsonObject
         if (message != null) {
             textContent(message["content"])
                 ?.takeIf { it.isNotEmpty() }
                 ?.let { events += StreamChunk.Complete(it) }
-            message["tool_calls"]?.jsonArray?.forEachIndexed { index, element ->
-                val tool = element.jsonObject
-                val function = tool["function"]?.jsonObject
+            (message["tool_calls"] as? JsonArray)?.forEachIndexed { index, element ->
+                val tool = element as? JsonObject ?: return@forEachIndexed
+                val function = tool["function"] as? JsonObject
                 events += StreamChunk.ToolCallDelta(
                     index = index,
-                    id = tool["id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                    name = function?.get("name")?.jsonPrimitive?.contentOrNull.orEmpty(),
-                    arguments = function?.get("arguments")?.jsonPrimitive?.contentOrNull.orEmpty()
+                    id = (tool["id"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+                    name = (function?.get("name") as? JsonPrimitive)?.contentOrNull.orEmpty(),
+                    arguments = (function?.get("arguments") as? JsonPrimitive)?.contentOrNull.orEmpty()
                 )
             }
         }
 
-        choice["finish_reason"]?.jsonPrimitive?.contentOrNull?.let {
+        (choice["finish_reason"] as? JsonPrimitive)?.contentOrNull?.let {
             events += StreamChunk.Finished(it)
         }
         return events

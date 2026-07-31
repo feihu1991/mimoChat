@@ -144,7 +144,7 @@ export async function chatCompletion(config: MimoConnection, model: string, prom
     : prompt
   const data = await apiFetch(config, CHAT_PATH, {
     method: 'POST',
-    body: JSON.stringify({ model, messages: [{ role: 'user', content }], stream: false }),
+    body: JSON.stringify({ model, messages: [{ role: 'user', content }], stream: false, max_tokens: 4096 }),
   }) as { choices?: Array<{ message?: { content?: string } }>; output_text?: string }
   const responseContent = data.choices?.[0]?.message?.content ?? data.output_text
   if (!responseContent) throw new Error('模型没有返回文本内容')
